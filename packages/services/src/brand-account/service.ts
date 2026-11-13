@@ -5,6 +5,7 @@ import { createAccountHttpClient, number, record, text } from "./httpClient.js";
 import {
   accountUser,
   privateSessionIdentity,
+  signedOutSession,
   agentRefreshForce,
   emptyWallet,
   publicSettings,
@@ -131,12 +132,7 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
       const session = await repo.withLock(async () => {
         const before = await repo.read();
         if (disposed || action !== actionGeneration) throw failure("session_changed");
-        const cleared = await save({
-          ...before,
-          epoch: before.epoch + 1,
-          credentials: null,
-          refreshUncertain: false,
-        });
+        const cleared = await save(signedOutSession(before), action);
         if (disposed || action !== actionGeneration) throw failure("session_changed");
         adopt(cleared);
         snapshot = { ...snapshot, error: null };
@@ -255,7 +251,10 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
 
   async function current(expected?: PrivateSession): Promise<PrivateSession> {
     if (disposed) throw failure("network");
+    const action = actionGeneration;
     const session = await repo.read();
+    // 异步系统授权期间可能已取消/换号；旧解密结果不得重新投影为当前账号。
+    if (disposed || action !== actionGeneration) throw failure("session_changed");
     if (session.epoch < snapshot.accountEpoch) throw failure("session_changed");
     if (
       expected &&
@@ -276,20 +275,17 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
     return session;
   }
 
-  async function save(session: PrivateSession): Promise<PrivateSession> {
-    const saved = await repo.write(session);
+  async function save(session: PrivateSession, action: number): Promise<PrivateSession> {
+    // OS授权等待期间取消、退出或换号必须使旧写入失效，不能仅在落盘后检查action。
+    const saved = await repo.write(session, () => !disposed && action === actionGeneration);
+    if (disposed || action !== actionGeneration) throw failure("session_changed");
     seenRevision = saved.revision;
     notify();
     return saved;
   }
 
-  async function expire(session: PrivateSession) {
-    const saved = await save({
-      ...session,
-      epoch: session.epoch + 1,
-      credentials: null,
-      refreshUncertain: false,
-    });
+  async function expire(session: PrivateSession, action: number) {
+    const saved = await save(signedOutSession(session), action);
     adopt(saved);
     snapshot = {
       ...snapshot,
@@ -300,12 +296,15 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
   }
 
   async function refreshSession(expected: PrivateSession): Promise<PrivateSession> {
+    const action = actionGeneration;
     return repo.withLock(async () => {
+      if (disposed || action !== actionGeneration) throw failure("session_changed");
       const latest = await requireSession(expected);
+      if (disposed || action !== actionGeneration) throw failure("session_changed");
       // 原因：另一Host可能已消费旧refresh；拿锁后必须重读，已换证则直接复用新pair。
       if (latest.credentials!.accessToken !== expected.credentials!.accessToken) return latest;
       if (!latest.credentials!.refreshToken) {
-        await expire(latest);
+        await expire(latest, action);
         throw failure("unauthenticated");
       }
       if (latest.refreshUncertain) throw failure("reauthentication_required");
@@ -313,7 +312,7 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
       inferenceRefreshPending = true;
       inferenceIoGeneration += 1;
       try {
-        marked = await save({ ...latest, refreshUncertain: true });
+        marked = await save({ ...latest, refreshUncertain: true }, action);
         const data = record(
           await http.request("/auth/refresh", {
             body: { refresh_token: marked.credentials!.refreshToken },
@@ -323,27 +322,32 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
         const refresh = text(data.refresh_token);
         if (!access || !refresh) throw failure("invalid_response");
         const seconds = number(data.expires_in, 0);
-        const saved = await save({
-          ...marked,
-          credentials: {
-            ...marked.credentials!,
-            accessToken: access,
-            refreshToken: refresh,
-            expiresAt: seconds > 0 ? Date.now() + seconds * 1000 : null,
+        const saved = await save(
+          {
+            ...marked,
+            credentials: {
+              ...marked.credentials!,
+              accessToken: access,
+              refreshToken: refresh,
+              expiresAt: seconds > 0 ? Date.now() + seconds * 1000 : null,
+            },
+            refreshUncertain: false,
           },
-          refreshUncertain: false,
-        });
+          action,
+        );
         adopt(saved);
         return saved;
       } catch (error) {
         const safe = safeFailure(error);
+        if (disposed || action !== actionGeneration || safe.code === "session_changed")
+          throw failure("session_changed");
         if (safe.code === "unauthenticated") {
-          await expire(marked);
+          await expire(marked, action);
           throw safe;
         }
         if (safe.code === "rate_limited") {
           // 服务端auth限流中间件先于refresh handler，429没有消费token，可供用户稍后重试。
-          await save({ ...marked, refreshUncertain: false });
+          await save({ ...marked, refreshUncertain: false }, action);
           throw safe;
         }
         // 网络超时保留uncertain标记和原材料：不能假设服务器未消费token并自动重放。
@@ -511,16 +515,19 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
     if (!accessToken) throw failure("invalid_response");
     const user = accountUser(data.user);
     const seconds = number(data.expires_in, 0);
-    const saved = await save({
-      ...session,
-      credentials: {
-        accessToken,
-        refreshToken: text(data.refresh_token) || undefined,
-        userId: user.id,
-        expiresAt: seconds > 0 ? Date.now() + seconds * 1000 : null,
+    const saved = await save(
+      {
+        ...session,
+        credentials: {
+          accessToken,
+          refreshToken: text(data.refresh_token) || undefined,
+          userId: user.id,
+          expiresAt: seconds > 0 ? Date.now() + seconds * 1000 : null,
+        },
+        refreshUncertain: false,
       },
-      refreshUncertain: false,
-    });
+      action,
+    );
     if (action !== actionGeneration || disposed) throw failure("session_changed");
     challenge = null;
     adopt(saved);
@@ -547,12 +554,7 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
         throw failure("captcha_required");
       const loggedIn = await repo.withLock(async () => {
         const before = await repo.read();
-        const cleared = await save({
-          ...before,
-          epoch: before.epoch + 1,
-          credentials: null,
-          refreshUncertain: false,
-        });
+        const cleared = await save(signedOutSession(before), action);
         if (action !== actionGeneration) throw failure("session_changed");
         adopt(cleared);
         emit();
@@ -596,6 +598,7 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
     try {
       await repo.withLock(async () => {
         const session = await repo.read();
+        if (disposed || action !== actionGeneration) throw failure("session_changed");
         if (session.epoch !== pending.epoch || session.credentials)
           throw failure("session_changed");
         const data = await http.request("/auth/login/2fa", {
@@ -630,13 +633,9 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
     try {
       await repo.withLock(async () => {
         const session = await repo.read();
+        if (disposed || action !== actionGeneration) throw failure("session_changed");
         const oldRefresh = session.credentials?.refreshToken;
-        const cleared = await save({
-          ...session,
-          epoch: session.epoch + 1,
-          credentials: null,
-          refreshUncertain: false,
-        });
+        const cleared = await save(signedOutSession(session), action);
         adopt(cleared);
         snapshot = { ...snapshot, status: "signedOut", error: null };
         emit();
@@ -752,21 +751,18 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
       const active = browserAction !== null || snapshot.browserLogin.status === "waiting";
       const epoch = snapshot.accountEpoch;
       browserLogin.cancel();
+      const action = actionGeneration;
       if (!active) return copy();
       // 原因：取消可能发生在加密保存期间；锁后墓碑保证晚到换证不能重新登录。
       await repo.withLock(async () => {
         const session = await repo.read();
+        if (disposed || action !== actionGeneration) throw failure("session_changed");
         if (session.epoch !== epoch) {
           adopt(session);
           emit();
           return;
         }
-        const cleared = await save({
-          ...session,
-          epoch: session.epoch + 1,
-          credentials: null,
-          refreshUncertain: false,
-        });
+        const cleared = await save(signedOutSession(session), action);
         adopt(cleared);
         emit();
       });

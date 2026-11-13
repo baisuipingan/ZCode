@@ -243,6 +243,35 @@ Main 只执行 Electron `safeStorage` 加解密，不拥有登录刷新、钱包
 
 Host 持有请求关联表及有界 deadline，销毁先 fence，再拒绝 pending、释放账号订阅；迟到结果无法恢复已销毁服务。每窗口账号服务共用同一个本机私有文件与 refresh 锁，但不是全应用内存单例；关窗口只 dispose，不 logout。密码和 token 不进入 RPC 错误的 message/cause/details 或日志。
 
+### 首次系统授权与异步加密（2026-11-14）
+
+已观察到真实安装包首次登录在5秒后显示 `storage_unavailable`，同期 Main 日志出现超过两分钟的停顿，现象符合同步安全存储等待；未捕获失败当时的 native stack，不能把日志间隔当成已测定的单次加密耗时。随后重试成功也不能排除首次系统授权等待。Electron 44 的异步接口及[官方说明](https://www.electronjs.org/docs/latest/api/safe-storage)确认同步 API 可等待系统输入并阻塞线程。Main 在本轮发行的 Mac/Windows 改用 `isAsyncEncryptionAvailable`、`encryptStringAsync`、`decryptStringAsync`；可用性检查和加解密每次 await 后均重验原 child 未退出且未进入 dispose，再允许下一个副作用或回包。不增加另一个加密队列、账号状态或 Renderer 端口，不用明文或异常时切回同步调用兜底。
+
+Linux 采用明确的平台分支，保留既有同步安全后端与 `basic_text` 拒绝。Electron 44.7.0 的 [async provider注册](https://github.com/electron/electron/blob/v44.7.0/shell/browser/browser_process_impl.cc)包含固定key的 Posix fallback，而 `getSelectedStorageBackend` 属于旧同步后端，不能证明实际异步provider安全；本轮不把 Linux 切到该异步provider，也不新增 Linux 支持。此为原安全实现的保留，不是 Mac/Windows 失败后的降级路径。
+
+`BRAND_ACCOUNT_CIPHER_TIMEOUT_MS` 为 shared 协议公开的120秒请求预算，Host pending 与 repo 的 OS-cipher 等待统一消费它，覆盖第一次系统授权。计时包含异步可用性初始化和一次加/解密；超时删除原 requestId，迟到结果不再关联。repo 原子替换前再次检查 dispose 与调用方 action generation；取消、退出或新登录使旧写入失效，即使旧 OS Promise 后来成功也不得保存凭据。请求等待不改变跨进程锁的所有权或回收条件。
+
+锁争用仍为独立的40秒有界等待：另一个窗口遇到首次系统授权尚未完成，可收到 `busy` 后重试；不把多次120秒串行相乘成长达数分钟的锁排队，不抢占活 PID 的锁。锁内重读、epoch 墓碑、refresh uncertain 和原子替换合同不变。旧 `os:v1:` envelope 与用途前缀不变，异步解密读取 `.result`，官方承诺能读取旧同步密文；不为 key rotation 新增隐式写入，Mac/Windows 后续合法写入自然使用异步加密。新密文回滚到旧包可能需要重新登录，不降级保存。
+
+```mermaid
+sequenceDiagram
+  participant S as Host / AccountSecretRepo
+  participant M as Main
+  participant OS as 系统安全存储
+  S->>M: UUID + cipher（120秒预算）
+  M->>OS: await availability / encrypt / decrypt
+  Note over M: 每个 await 后重验原 child 生命周期
+  opt 期间取消 / 新登录 / Host销毁
+    S->>S: action generation / dispose fence
+  end
+  OS-->>M: 异步结果
+  M-->>S: 只回复仍存活的原 child
+  S->>S: UUID关联 + 写入前generation复核
+  Note over S: 超时或失效结果不得原子替换凭据
+```
+
+回归以可重复工程运行时脚本验证真实源函数：异步可用性/加密延迟超过旧5秒仍可完成、Host统一预算与迟到结果、旧 envelope解密及 `.result`、await期间dispose/exit、Linux不调用async且拒绝basic_text、repo取消/销毁后不写入及锁争用预算。测试使用合成材料与临时文件，不访问正式凭据或用户钥匙串；完整安装包首次系统授权由发布验收补齐，不以模拟通过宣称已验证原生授权弹窗。
+
 私有会话文件由 Main 按当前 Electron `userData/brand-account/session.json` 下发，不复用公开 Credential RPC 的文件。此规则由 [28号修复合同](28-installed-login-and-startup-fixes.md) 更新：最初共用 `getAppConfigDir()/brand-account/session.json` 会混入其他运行身份的不可读密文，旧文件保留但不再读取。开发验收同时隔离 `ZCODE_DATA_BASE_DIR` 与 Electron user/session data，不能读取真实用户会话。
 
 ```mermaid

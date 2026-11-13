@@ -93,6 +93,9 @@ import type {
 // RPC 服务频道 —— 通过 ChannelServer/ChannelClient 传输
 // ============================================================================
 
+/** 可信 Host→Main 的一次账号 OS 加密请求，包含首次系统授权；不是跨进程锁排队预算。 */
+export const BRAND_ACCOUNT_CIPHER_TIMEOUT_MS = 120_000;
+
 /** RPC 服务频道名。与 ServiceDescriptor.channelName 对应。 */
 export const ServiceChannels = {
   File: "file",

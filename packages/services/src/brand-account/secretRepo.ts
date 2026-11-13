@@ -3,8 +3,9 @@ import { watchFile, unwatchFile } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { acquireFileLock } from "@zcode/shared/node";
+import { BRAND_ACCOUNT_CIPHER_TIMEOUT_MS } from "@zcode/shared";
 import { setTimeout as delay } from "node:timers/promises";
-import { failure } from "./errors.js";
+import { failure, safeFailure } from "./errors.js";
 
 export interface PrivateSession {
   version: 1;
@@ -41,7 +42,10 @@ export function createSecretRepo(options: SecretRepoOptions) {
       return await Promise.race([
         operation(),
         new Promise<string>((_, reject) => {
-          timer = setTimeout(() => reject(failure("storage_unavailable")), 5_000);
+          timer = setTimeout(
+            () => reject(failure("storage_unavailable")),
+            BRAND_ACCOUNT_CIPHER_TIMEOUT_MS,
+          );
         }),
       ]);
     } finally {
@@ -91,14 +95,22 @@ export function createSecretRepo(options: SecretRepoOptions) {
     }
   }
 
-  async function write(session: PrivateSession): Promise<PrivateSession> {
-    if (disposed) throw failure("storage_unavailable");
+  async function write(
+    session: PrivateSession,
+    canCommit: () => boolean = () => true,
+  ): Promise<PrivateSession> {
+    const assertCurrent = () => {
+      if (disposed) throw failure("storage_unavailable");
+      if (!canCommit()) throw failure("session_changed");
+    };
+    assertCurrent();
     const next = { ...session, revision: randomUUID() };
     const temporary = `${options.filePath}.${randomUUID()}.tmp`;
     try {
       const ciphertext = await cipher(() => options.encrypt(JSON.stringify(next)));
       if (!ciphertext) throw failure("storage_unavailable");
-      if (disposed) throw failure("storage_unavailable");
+      // 首次系统授权可能较慢；期间取消/换号后，迟到密文不能写入旧凭据。
+      assertCurrent();
       await mkdir(dirname(options.filePath), { recursive: true, mode: 0o700 });
       const file = await open(temporary, "wx", 0o600);
       try {
@@ -109,7 +121,7 @@ export function createSecretRepo(options: SecretRepoOptions) {
       }
       // 原因：分别写 access/refresh 会在崩溃或双窗口读取时产生错配；同文件原子替换整对材料。
       for (let attempt = 0; ; attempt += 1) {
-        if (disposed) throw failure("storage_unavailable");
+        assertCurrent();
         try {
           await rename(temporary, options.filePath);
           break;
@@ -124,7 +136,8 @@ export function createSecretRepo(options: SecretRepoOptions) {
         }
       }
       return next;
-    } catch {
+    } catch (error) {
+      if (safeFailure(error).code === "session_changed") throw failure("session_changed");
       throw failure("storage_unavailable");
     } finally {
       await unlink(temporary).catch(() => {});
@@ -140,7 +153,7 @@ export function createSecretRepo(options: SecretRepoOptions) {
     if (disposed) throw failure("busy");
     let release: () => Promise<void>;
     try {
-      // 复用已带 owner-token 校验的进程锁；40秒等待覆盖10秒网络及有界OS加解密，不绕锁换证。
+      // 40秒仅限制锁争用；首次系统授权可更久，其他窗口收到busy重试，不抢占活owner或绕锁换证。
       release = await acquireFileLock(options.filePath, [25, 50, 100, 200], 1_000, 40_000);
     } catch (error) {
       throw failure(

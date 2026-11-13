@@ -357,52 +357,70 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.BrandAccountCipherRequest) {
       // 账号明文仅在已 fork 的可信 Host 与 Main 之间流动；不注册 Renderer IPC 或通用解密服务。
-      if (exitedHostProcesses.has(child) || disposingHostProcesses.has(child)) return;
+      const isActive = () => !exitedHostProcesses.has(child) && !disposingHostProcesses.has(child);
+      if (!isActive()) return;
       const { requestId, operation, value } = result.data;
-      let cipherResult:
-        | { ok: true; value: string }
-        | { ok: false; errorCode: "secure_storage_unavailable" | "secure_storage_failed" };
-      try {
-        if (
-          !safeStorage.isEncryptionAvailable() ||
-          (process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text")
-        ) {
-          cipherResult = { ok: false, errorCode: "secure_storage_unavailable" };
-        } else if (operation === "encrypt") {
-          // 明文按 UTF-8 字节限额，密文/base64 另留空间，确保已保存的记录仍可恢复。
-          if (Buffer.byteLength(value, "utf8") > 262_144) throw new Error();
-          cipherResult = {
-            ok: true,
-            value: `os:v1:${safeStorage.encryptString(`milorouter-account:v1:${value}`).toString("base64")}`,
-          };
-        } else {
-          // 限定本桥用途，避免把其它 safeStorage 密文当作账号数据解密并返回。
-          const encoded = value.startsWith("os:v1:") ? value.slice(6) : "";
-          const encrypted = Buffer.from(encoded, "base64");
-          if (!encoded || encrypted.toString("base64") !== encoded) throw new Error();
-          const decrypted = safeStorage.decryptString(encrypted);
-          const prefix = "milorouter-account:v1:";
-          if (!decrypted.startsWith(prefix)) throw new Error();
-          cipherResult = { ok: true, value: decrypted.slice(prefix.length) };
-        }
-        const reply = hostBrandAccountCipherResultMessageSchema.parse({
-          type: HostMessageTypes.BrandAccountCipherResult,
-          requestId,
-          result: cipherResult,
-        });
-        child.postMessage(reply);
-      } catch {
-        // OS 异常、非法密文和窗口销毁不能把明文或原始异常带入日志/RPC。
+      void (async () => {
+        let cipherResult:
+          | { ok: true; value: string }
+          | { ok: false; errorCode: "secure_storage_unavailable" | "secure_storage_failed" };
         try {
-          child.postMessage({
+          // Mac/Windows同步调用会等待首次系统授权并阻塞Main，可用性检查也改异步。
+          // Linux异步provider可能退回固定key；该平台保留原安全后端实现，不作为异常fallback。
+          const useAsyncStorage = process.platform !== "linux";
+          const available = useAsyncStorage
+            ? await safeStorage.isAsyncEncryptionAvailable()
+            : safeStorage.isEncryptionAvailable();
+          if (!isActive()) return;
+          if (
+            !available ||
+            (process.platform === "linux" &&
+              safeStorage.getSelectedStorageBackend() === "basic_text")
+          ) {
+            cipherResult = { ok: false, errorCode: "secure_storage_unavailable" };
+          } else if (operation === "encrypt") {
+            // 明文按 UTF-8 字节限额，密文/base64 另留空间，确保已保存的记录仍可恢复。
+            if (Buffer.byteLength(value, "utf8") > 262_144) throw new Error();
+            const plaintext = `milorouter-account:v1:${value}`;
+            const encrypted = useAsyncStorage
+              ? await safeStorage.encryptStringAsync(plaintext)
+              : safeStorage.encryptString(plaintext);
+            if (!isActive()) return;
+            cipherResult = { ok: true, value: `os:v1:${encrypted.toString("base64")}` };
+          } else {
+            // 异步接口可解旧同步密文，继续保留用途前缀，拒绝其他safeStorage数据。
+            const encoded = value.startsWith("os:v1:") ? value.slice(6) : "";
+            const encrypted = Buffer.from(encoded, "base64");
+            if (!encoded || encrypted.toString("base64") !== encoded) throw new Error();
+            const decrypted = useAsyncStorage
+              ? (await safeStorage.decryptStringAsync(encrypted)).result
+              : safeStorage.decryptString(encrypted);
+            if (!isActive()) return;
+            const prefix = "milorouter-account:v1:";
+            if (!decrypted.startsWith(prefix)) throw new Error();
+            cipherResult = { ok: true, value: decrypted.slice(prefix.length) };
+          }
+          if (!isActive()) return;
+          const reply = hostBrandAccountCipherResultMessageSchema.parse({
             type: HostMessageTypes.BrandAccountCipherResult,
             requestId,
-            result: { ok: false, errorCode: "secure_storage_failed" },
+            result: cipherResult,
           });
+          child.postMessage(reply);
         } catch {
-          // Host 已退出，调用方的生命周期 fence 会拒绝 pending。
+          // OS 异常、非法密文和窗口销毁不能把明文或原始异常带入日志/RPC。
+          if (!isActive()) return;
+          try {
+            child.postMessage({
+              type: HostMessageTypes.BrandAccountCipherResult,
+              requestId,
+              result: { ok: false, errorCode: "secure_storage_failed" },
+            });
+          } catch {
+            // Host 已退出，调用方的生命周期 fence 会拒绝 pending。
+          }
         }
-      }
+      })();
       return;
     }
 

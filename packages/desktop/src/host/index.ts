@@ -103,6 +103,7 @@ import {
 } from "./offPeakDispatchPlan.js";
 import {
   HostMessageTypes,
+  BRAND_ACCOUNT_CIPHER_TIMEOUT_MS,
   ZCODE_VERSION,
   HostResponseTypes,
   hostBrandAccountCipherRequestResponseSchema,
@@ -289,7 +290,7 @@ function requestBrandAccountCipher(
     const timeout = setTimeout(() => {
       pendingBrandAccountCipherRequests.delete(requestId);
       reject(brandAccountStorageError());
-    }, 10_000);
+    }, BRAND_ACCOUNT_CIPHER_TIMEOUT_MS);
     timeout.unref();
     pendingBrandAccountCipherRequests.set(requestId, { resolve, reject, timeout });
     try {

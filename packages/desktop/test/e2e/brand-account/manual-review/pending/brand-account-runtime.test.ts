@@ -269,8 +269,8 @@ async function fixture() {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const hosts = [] as ReturnType<typeof createBrandAccountService>[];
   const children: ChildProcess[] = [];
-  const makeHost = () => {
-    const host = createBrandAccountService({ baseUrl, filePath, ...cipher });
+  const makeHost = (encrypt = cipher.encrypt) => {
+    const host = createBrandAccountService({ baseUrl, filePath, ...cipher, encrypt });
     hosts.push(host);
     return host.service;
   };
@@ -452,6 +452,36 @@ test("AW07/09: two child Hosts consume one rotating refresh and logout fences an
     assert.equal(privateSession.credentials, null);
     assert.equal(f.state.refreshes, 2);
   } finally {
+    await f.close();
+  }
+});
+
+test("AW09: logout intent prevents a pending refresh HTTP response from entering encryption", async () => {
+  const f = await fixture();
+  const gate = requestGate();
+  const encryptedAccess: Array<string | null> = [];
+  try {
+    const service = f.makeHost(async (value) => {
+      encryptedAccess.push(JSON.parse(value).credentials?.accessToken ?? null);
+      return f.cipher.encrypt(value);
+    });
+    await service.login(credentials);
+    f.expireAccess();
+    f.state.refreshGate = gate;
+    const refreshing = service.refreshBalance();
+    const refreshRejected = assert.rejects(refreshing, { code: "session_changed" });
+    await gate.started.promise;
+    const loggingOut = service.logout();
+    gate.finish.release();
+    await refreshRejected;
+    await loggingOut;
+    assert.equal(encryptedAccess.includes("E2E_PRIVATE_ACCESS_2"), false);
+    const outer = JSON.parse(await readFile(f.filePath, "utf8"));
+    const session = JSON.parse(await f.cipher.decrypt(outer.ciphertext));
+    assert.equal(session.credentials, null);
+    assert.equal((await service.getSnapshot()).status, "signedOut");
+  } finally {
+    gate.finish.release();
     await f.close();
   }
 });

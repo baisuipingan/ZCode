@@ -20,6 +20,11 @@ export const emptyWallet = (): BrandAccountSnapshot["wallet"] => ({
   error: null,
 });
 
+/** 登录、退出与取消共用同一epoch墓碑投影；唯一写入路径仍由账号服务持有。 */
+export function signedOutSession(session: PrivateSession): PrivateSession {
+  return { ...session, epoch: session.epoch + 1, credentials: null, refreshUncertain: false };
+}
+
 /** RPC只接收刷新意图；不接受客户端提供的目录、版本或成功时间。 */
 export function agentRefreshForce(input: unknown): boolean {
   if (input === undefined) return false;
