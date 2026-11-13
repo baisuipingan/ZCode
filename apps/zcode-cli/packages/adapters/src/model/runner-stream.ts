@@ -709,6 +709,7 @@ export async function* runStreamText(input: {
       return;
     } catch (error) {
       attemptFailed = true;
+      await input.request.reportManagedFailure?.(error);
       if (recordModelIO && options) {
         await recordStreamTextDebug({
           modelIoFullRetentionEnabled: input.modelIoFullRetentionEnabled,

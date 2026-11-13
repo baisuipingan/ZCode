@@ -247,6 +247,48 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("品牌队列提升归属", () => {
+  it.each(["old-account", "old-policy", "legacy"] as const)(
+    "%s 在 reserve/执行前拒绝，原项保留",
+    async (kind) => {
+      const current = {
+        origin: "https://account.example",
+        accountRef: "user:B",
+        accountEpoch: 2,
+        policyRevision: "policy:B",
+      };
+      const original =
+        kind === "legacy"
+          ? undefined
+          : {
+              ...current,
+              ...(kind === "old-account"
+                ? { accountRef: "user:A" }
+                : { policyRevision: "policy:A" }),
+            };
+      const item = queueItem({ billingBinding: original });
+      const app = makeApp();
+      const host = makeHost(makeRecord({ app }), { getQueueItem: () => item });
+      await expect(
+        new V4CommandExecutor(host).execute(
+          envelope("sendQueuedNow", { queueItemId: item.queueItemId }),
+          {
+            admissionSeq: 1,
+            admittedAt: 1,
+            queueItemId: "promotion",
+            billingBinding: current,
+          },
+        ),
+      ).rejects.toMatchObject({ reasonCode: "managed_billing_binding_changed" });
+      expect(app.reserveQueueItem).not.toHaveBeenCalled();
+      expect(app.runtime.acquireForegroundPromotionLease).not.toHaveBeenCalled();
+      expect(app.sendInput).not.toHaveBeenCalled();
+      expect(app.removeQueueItem).not.toHaveBeenCalled();
+      expect(item.billingBinding).toEqual(original);
+    },
+  );
+});
+
 describe("v4 原生 queue 单项命令", () => {
   it("deleteQueueItem：直驱 app.removeQueueItem（queueItemId ≡ pendingInputId）", async () => {
     const app = makeApp();

@@ -677,6 +677,15 @@ export interface DynamicWorkflowRunPort {
     request: DynamicWorkflowRunRetuneRequest,
   ): Promise<DynamicWorkflowRunRetuneResult>;
   getTask(taskId: string): Promise<DynamicWorkflowRunSnapshot | undefined>;
+  /**
+   * 仅进程内的原始扣费归属，供既有后台 tracker 投影；不进入 snapshot、journal、协议或模型文本。
+   * 返回对象但无 binding 表示明确无托管归属；没有本地 owner 时返回 undefined，不能向当前账号补签。
+   */
+  getBillingScope?(runId: string):
+    | {
+        billingBinding?: import("@zcode/shared").ManagedBillingBinding;
+      }
+    | undefined;
   waitForTask(
     taskId: string,
     options?: DynamicWorkflowRunWaitOptions,

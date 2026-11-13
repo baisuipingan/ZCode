@@ -25,6 +25,35 @@ function createRuntime(
 }
 
 describe("AgentRuntime session residency facts", () => {
+  it("registry 注册冻结创建轮归属；更新/rollback 不借新账户，显式普通 API 也保留", () => {
+    const registry = new InMemoryRuntimeTaskRegistry();
+    const originalBinding = {
+      origin: "https://account.example.invalid",
+      accountRef: "synthetic-account-a",
+      accountEpoch: 1,
+      policyRevision: "synthetic-scope",
+    };
+    const expected = structuredClone(originalBinding);
+    let currentBinding: typeof originalBinding | undefined;
+    registry.setBillingBindingSource(() => ({ billingBinding: currentBinding }));
+    const task = {
+      taskId: "binding-owner",
+      startedAt: new Date(0),
+      status: "running" as const,
+      type: "local_agent" as const,
+    };
+    registry.register(task);
+    const ordinarySnapshot = registry.get(task.taskId)!;
+    currentBinding = originalBinding;
+    registry.register({ ...task, taskId: "managed-owner" });
+    originalBinding.accountRef = "synthetic-account-b";
+    expect(registry.get("managed-owner")?.billingBinding).toEqual(expected);
+    registry.update("managed-owner", (current) => ({ ...current, billingBinding: currentBinding }));
+    expect(registry.get("managed-owner")?.billingBinding).toEqual(expected);
+    registry.register(ordinarySnapshot);
+    expect(registry.get(task.taskId)?.billingBinding).toBeUndefined();
+  });
+
   it("idle runtime 没有 active/queued work 或 running background work", () => {
     const { runtime } = createRuntime("idle");
 

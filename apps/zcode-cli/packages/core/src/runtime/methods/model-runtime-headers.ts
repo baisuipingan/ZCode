@@ -15,6 +15,8 @@ export function createRefreshRuntimeHeadersBeforeModelAttempt(
 ):
   | ((attemptInput: {
       accountAccess?: ZCodeProviderAccountAccess;
+      managedAccess?: import("@zcode/shared").ManagedProviderAccess;
+      modelConfigRevision?: string;
       expectedAccountScope?: string;
       rejectedProjectTokenFingerprint?: string;
       attempt: number;
@@ -46,6 +48,8 @@ export function createRefreshRuntimeHeadersBeforeModelAttempt(
     // （helpers/child-client-ports.ts），把 sessionId 改写成客户端认识的根会话。
     const refreshResult = await runtimeHeadersPort.refreshBeforeModelRequest({
       accountAccess: attemptInput.accountAccess,
+      managedAccess: attemptInput.managedAccess,
+      modelConfigRevision: attemptInput.modelConfigRevision,
       expectedAccountScope: attemptInput.expectedAccountScope,
       rejectedProjectTokenFingerprint: attemptInput.rejectedProjectTokenFingerprint,
       abortSignal: attemptInput.abortSignal ?? input.abortSignal,

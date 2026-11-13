@@ -346,6 +346,7 @@ export type TurnInputSourceMetadata =
   | { kind: "genUi"; path: string; title?: string };
 
 export interface TurnInputIntentMetadata {
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
   planEnabled?: boolean;
   conversationQuotes?: Array<{
     text: string;

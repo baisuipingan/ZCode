@@ -85,6 +85,9 @@ import {
   ZCODE_ENV,
   ZCODE_PRODUCT_FLAVOR,
   ZCODE_AUTO_UPDATE_ENABLED,
+  MILOCODE_UPDATE_BASE_URL,
+  MILOCODE_UPDATE_PUBLIC_KEYS_JSON,
+  MILOCODE_SPARKLE_PUBLIC_KEY,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   DEFAULT_LOCALE,
   TEST_ZCODE_ENDPOINT_ORIGIN,
@@ -108,8 +111,8 @@ import {
   hydratePendingPostUpdateReleaseNotes,
   initAutoUpdater,
   onAutoUpdaterStateChanged,
+  openMiloCodeMacUpdateStatus,
   refreshAutoUpdaterReleaseChannel,
-  resolveUpdateFeedSourceFromStartupConfig,
   syncAutoUpdaterStateToWindow,
   syncPostUpdateReleaseNotesToWindow,
   syncReadyUpdateToWindow,
@@ -160,7 +163,6 @@ import { applyAppIcon } from "./desktopWindowChrome.js";
 import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
-import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
 import { createDesktopTray, updateWindowsDesktopTrayMenu } from "./desktopTray.js";
 import {
   createCloseToTrayCapabilityMonitor,
@@ -198,6 +200,7 @@ import {
 import {
   disposeHostProcess,
   disposeHostProcessAndWait,
+  assertHostProcessesExitedForUpdate,
   listDisposingHostProcesses,
   loadWindow,
   spawnHostProcess,
@@ -673,6 +676,9 @@ const forceQuitRef = { current: false };
 const explicitQuitRef = { current: false };
 let appQuitPreparationInFlight: Promise<void> | null = null;
 let hasPreparedAppQuit = false;
+// 普通退出允许有界收口；更新复用它时仍须检查原快照，不能因注册表已变动漏掉未退出 Host。
+const appQuitHostProcesses = new Set<ElectronUtilityProcess>();
+let appQuitPreparationFailed = false;
 const windowWorkspaceMap = new Map<number, Set<string>>();
 const windowTaskRealtimeHostIdMap = new Map<number, string>();
 const windowUnreadCountMap = new Map<number, number>();
@@ -1210,123 +1216,129 @@ function syncImmediateAppSettings(patch: ReturnType<typeof appSettingsPatchSchem
 }
 
 async function getAutoUpdatePreferences() {
-  const settings = await mainSettingService.get();
-  return {
-    autoDownloadAndInstallUpdates: settings.autoDownloadAndInstallUpdates ?? false,
-  };
+  return { autoDownloadAndInstallUpdates: false };
 }
 
-async function setAutoDownloadAndInstallUpdates(enabled: boolean) {
-  await mainSettingService.update({
-    autoDownloadAndInstallUpdates: enabled,
-  });
-  syncImmediateAppSettings({
-    autoDownloadAndInstallUpdates: enabled,
-  });
+async function setAutoDownloadAndInstallUpdates(_enabled: boolean) {
+  // MiloCode 首期只允许显式下载及安装；旧客户端保存的自动安装偏好不能越过退出准入。
+  await mainSettingService.update({ autoDownloadAndInstallUpdates: false });
+  syncImmediateAppSettings({ autoDownloadAndInstallUpdates: false });
   for (const win of getApplicationWindowsExcludingCuaIndicator()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(PlatformChannels.SettingsChanged);
-    }
+    if (!win.isDestroyed()) win.webContents.send(PlatformChannels.SettingsChanged);
   }
 }
 
 async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"): Promise<void> {
-  const selection = selectAppShutdownPolicy(activeAppShutdownKind, kind, process.platform);
-  activeAppShutdownKind = selection.kind;
-  activeAppShutdownPolicy = selection.policy;
-  if (selection.upgraded && (hasPreparedAppQuit || appQuitPreparationInFlight)) {
-    // 更新请求可能晚于普通退出屏障。已创建的 4s timer 无法靠修改全局策略延长；
-    // 明确保留既有预算，并允许更新继续进入 fail-open 资源扫描和安装器。
-    logger.warn(
-      `[app-quit] update install joined an existing normal shutdown barrier (${reason}); existing timers keep their original budget`,
-    );
-  }
-  if (hasPreparedAppQuit) {
-    return;
-  }
-  if (appQuitPreparationInFlight) {
-    await appQuitPreparationInFlight;
-    return;
-  }
-
-  markForceQuit(reason);
-  windowsCuaOperationIndicator.dispose();
-  browserScreenshotSurfaceCoordinator.dispose();
-  // Bug 根因：资源样本改为 5 分钟窗口后，退出仍直接 stop 会清空未满窗口的数据。
-  // 退出时只排空已存在的角色 / Agent 内存窗口，不启动新采样、目录扫描或外部探针。
-  stopDesktopResourceTelemetry({ flushPendingWindows: true });
-  stopDesktopZCodeDataSizeTelemetry();
-  stopDesktopNetworkTelemetry();
-  stopRemoteUsageArmsPeriodicSampling();
-  disposeRendererActionTraceIpc?.();
-  disposeRendererActionTraceIpc = undefined;
-  notifyStabilityAppExit(
-    getStabilityLifecycleScene() === "update_install" ? "update_install" : "app_quit",
-    logger,
-    { exitCode: 0, exitKind: "normal" },
-  );
-
-  const cronSchedulerToDispose = cronScheduler;
-  cronScheduler = null;
-
   const hostProcesses = [
     ...new Set([...windowHostProcessMap.values(), ...listDisposingHostProcesses()]),
   ];
-  logger.info(
-    `[app-quit] waiting for host process cleanup (${reason}), kind=${activeAppShutdownKind}, hosts=${hostProcesses.length}, forceKillDelayMs=${activeAppShutdownPolicy.forceKillDelayMs}, waitTimeoutMs=${activeAppShutdownPolicy.waitTimeoutMs}`,
-  );
+  for (const child of hostProcesses) appQuitHostProcesses.add(child);
+  // 同一退出屏障只有一个执行路径，更新准入位于其外侧，覆盖新建、在途及已完成三种入口。
+  const runPreparation = async () => {
+    const selection = selectAppShutdownPolicy(activeAppShutdownKind, kind, process.platform);
+    activeAppShutdownKind = selection.kind;
+    activeAppShutdownPolicy = selection.policy;
+    if (selection.upgraded && (hasPreparedAppQuit || appQuitPreparationInFlight)) {
+      // 更新请求可能晚于普通退出屏障。保留已创建 timer 的预算；
+      // 屏障收口后必须检查原 Host 快照的真实 exit，不能沿用普通退出的超时放行。
+      logger.warn(
+        `[app-quit] update install joined an existing normal shutdown barrier (${reason}); existing timers keep their original budget`,
+      );
+    }
+    if (hasPreparedAppQuit) {
+      return;
+    }
+    if (appQuitPreparationInFlight) {
+      await appQuitPreparationInFlight;
+      return;
+    }
 
-  appQuitPreparationInFlight = Promise.all([
-    // 退出屏障结束后再启动窗口尺寸写入，可能在 app.exit 前留下 setting.json.lock。
-    // 尺寸已在 resize 防抖或最大化状态变化时保存，退出屏障不再创建新的尺寸写入。
-    // 修复原因：Main 过去不会等待仍在发送的 /event/report，正常退出也会直接丢事件。
-    // 与其它 owner 并行进入既有屏障，最多等待 2 秒，避免 telemetry 串行放大退出预算。
-    appTelemetryCore.flushPendingReports({ timeoutMs: 2_000 }),
-    localTtftExporter.shutdown(),
-    flushLocalTtftLogs(),
-    rendererActionTraceBroker.shutdown().catch((error) => {
-      logger.warn(`[app-quit] renderer action trace shutdown failed (${reason}):`, error);
-    }),
-    // 旧流程先等待 Cron 的 1.5s deadline，再启动 Host timer，导致声明的
-    // 4.5s/9s 退出总预算被串行放大。两类 owner 无关闭依赖，统一并行进入同一屏障。
-    (async () => {
-      try {
-        await cronSchedulerToDispose?.dispose();
-      } catch (error) {
-        logger.warn(`[app-quit] cron scheduler dispose failed (${reason}):`, error);
-      }
-    })(),
-    // remote session、attachment 和 transport 都由窗口 Host 持有；这里先清理
-    // Main 的请求关联，再由下方每窗口唯一 Host 的 shutdown barrier 释放真实连接与 Agent。
-    remoteSessionManager.disposeAllAndWaitForAppShutdown(reason),
-    ...hostProcesses.map((child, index) =>
-      disposeHostProcessAndWait(
-        child,
-        `${reason}-${index + 1}`,
-        disposingHostProcessTimers,
-        logger,
-        {
-          forceKillDelayMs: activeAppShutdownPolicy.forceKillDelayMs,
-          waitTimeoutMs: activeAppShutdownPolicy.waitTimeoutMs,
-        },
+    markForceQuit(reason);
+    windowsCuaOperationIndicator.dispose();
+    browserScreenshotSurfaceCoordinator.dispose();
+    // Bug 根因：资源样本改为 5 分钟窗口后，退出仍直接 stop 会清空未满窗口的数据。
+    // 退出时只排空已存在的角色 / Agent 内存窗口，不启动新采样、目录扫描或外部探针。
+    stopDesktopResourceTelemetry({ flushPendingWindows: true });
+    stopDesktopZCodeDataSizeTelemetry();
+    stopDesktopNetworkTelemetry();
+    stopRemoteUsageArmsPeriodicSampling();
+    disposeRendererActionTraceIpc?.();
+    disposeRendererActionTraceIpc = undefined;
+    notifyStabilityAppExit(
+      getStabilityLifecycleScene() === "update_install" ? "update_install" : "app_quit",
+      logger,
+      { exitCode: 0, exitKind: "normal" },
+    );
+
+    const cronSchedulerToDispose = cronScheduler;
+    cronScheduler = null;
+
+    logger.info(
+      `[app-quit] waiting for host process cleanup (${reason}), kind=${activeAppShutdownKind}, hosts=${hostProcesses.length}, forceKillDelayMs=${activeAppShutdownPolicy.forceKillDelayMs}, waitTimeoutMs=${activeAppShutdownPolicy.waitTimeoutMs}`,
+    );
+
+    appQuitPreparationInFlight = Promise.all([
+      // 退出屏障结束后再启动窗口尺寸写入，可能在 app.exit 前留下 setting.json.lock。
+      // 尺寸已在 resize 防抖或最大化状态变化时保存，退出屏障不再创建新的尺寸写入。
+      // 修复原因：Main 过去不会等待仍在发送的 /event/report，正常退出也会直接丢事件。
+      // 与其它 owner 并行进入既有屏障，最多等待 2 秒，避免 telemetry 串行放大退出预算。
+      appTelemetryCore.flushPendingReports({ timeoutMs: 2_000 }),
+      localTtftExporter.shutdown(),
+      flushLocalTtftLogs(),
+      rendererActionTraceBroker.shutdown().catch((error) => {
+        appQuitPreparationFailed = true;
+        logger.warn(`[app-quit] renderer action trace shutdown failed (${reason}):`, error);
+      }),
+      // 旧流程先等待 Cron 的 1.5s deadline，再启动 Host timer，导致声明的
+      // 4.5s/9s 退出总预算被串行放大。两类 owner 无关闭依赖，统一并行进入同一屏障。
+      (async () => {
+        try {
+          await cronSchedulerToDispose?.dispose();
+        } catch (error) {
+          appQuitPreparationFailed = true;
+          logger.warn(`[app-quit] cron scheduler dispose failed (${reason}):`, error);
+        }
+      })(),
+      // remote session、attachment 和 transport 都由窗口 Host 持有；这里先清理
+      // Main 的请求关联，再由下方每窗口唯一 Host 的 shutdown barrier 释放真实连接与 Agent。
+      remoteSessionManager.disposeAllAndWaitForAppShutdown(reason),
+      ...hostProcesses.map((child, index) =>
+        disposeHostProcessAndWait(
+          child,
+          `${reason}-${index + 1}`,
+          disposingHostProcessTimers,
+          logger,
+          {
+            forceKillDelayMs: activeAppShutdownPolicy.forceKillDelayMs,
+            waitTimeoutMs: activeAppShutdownPolicy.waitTimeoutMs,
+          },
+        ),
       ),
-    ),
-  ])
-    .then(() => {
-      logger.info(`[app-quit] host process cleanup completed (${reason})`);
-    })
-    .catch((error) => {
-      logger.error(`[app-quit] host process cleanup failed (${reason}):`, error);
-    })
-    .finally(() => {
-      // before-quit 是同步事件。只发 Dispose 就继续退出 main 的话，
-      // host 还没等到 agent 进程树的 SIGTERM/SIGKILL 兜底完成就被带走，zcode-cli 会被 init 接管成残留进程。
-      // 这里先拦截第一次退出，等待 host 清理完成后再放行第二次 app.quit。
-      hasPreparedAppQuit = true;
-      appQuitPreparationInFlight = null;
-    });
+    ])
+      .then(() => {
+        logger.info(`[app-quit] host process cleanup completed (${reason})`);
+      })
+      .catch((error) => {
+        appQuitPreparationFailed = true;
+        logger.error(`[app-quit] host process cleanup failed (${reason}):`, error);
+      })
+      .finally(() => {
+        // before-quit 是同步事件。只发 Dispose 就继续退出 main 的话，
+        // host 还没等到 agent 进程树的 SIGTERM/SIGKILL 兜底完成就被带走，zcode-cli 会被 init 接管成残留进程。
+        // 这里先拦截第一次退出，等待 host 清理完成后再放行第二次 app.quit。
+        hasPreparedAppQuit = true;
+        appQuitPreparationInFlight = null;
+      });
 
-  await appQuitPreparationInFlight;
+    await appQuitPreparationInFlight;
+  };
+  await runPreparation();
+  if (kind === "update-install") {
+    if (appQuitPreparationFailed) {
+      throw new Error("MiloCode update shutdown preparation failed");
+    }
+    assertHostProcessesExitedForUpdate(appQuitHostProcesses);
+  }
 }
 
 function exitPreparedApp(reason: string): never | void {
@@ -1570,7 +1582,7 @@ function confirmAppQuit(originWindow?: BrowserWindow | null) {
     defaultId: 1,
     cancelId: 1,
     title: isZh ? "退出确认" : "Confirm Quit",
-    message: isZh ? "确认退出 Z Code?" : "Quit Z Code?",
+    message: isZh ? "确认退出 MiloCode？" : "Quit MiloCode?",
     detail: detailLines.join("\n"),
     icon: nativeImage.createFromPath(iconPath),
   };
@@ -1784,6 +1796,7 @@ function syncUpdateStatusWindowLayout(win: BrowserWindow) {
 }
 
 function openUpdateStatusWindow() {
+  if (openMiloCodeMacUpdateStatus()) return;
   if (updateStatusWindow && !updateStatusWindow.isDestroyed()) {
     if (updateStatusWindow.isMinimized()) {
       updateStatusWindow.restore();
@@ -2293,12 +2306,22 @@ app.whenReady().then(async () => {
   await hydratePendingPostUpdateReleaseNotes(mainSettingService);
   logWindowsBundledRuntimeIntegrityDiagnostic();
 
-  // 启动自动更新检查（后台执行，不阻塞主界面）
-  // Preview 身份无论连接哪个后端都不自动更新：stable feed 上只分发正式 ZCode 安装包，
-  // 不向 Preview 渠道提供更新。构建期未启用自动更新时同样不更新
-  // （见 docs/desktop/build-time-optional-capabilities.md）。
+  // 更新源与发布公钥随引导版固化；未配置或不支持的平台关闭更新，不能回原厂 feed。
+  const supportedMiloCodeUpdatePlatform =
+    (process.platform === "win32" &&
+      process.arch === "x64" &&
+      MILOCODE_UPDATE_PUBLIC_KEYS_JSON !== "{}") ||
+    (process.platform === "darwin" &&
+      process.arch === "arm64" &&
+      Boolean(MILOCODE_SPARKLE_PUBLIC_KEY));
   void initAutoUpdater({
-    enabled: ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
+    enabled:
+      app.isPackaged &&
+      ZCODE_PRODUCT_FLAVOR === "production" &&
+      ZCODE_AUTO_UPDATE_ENABLED &&
+      Boolean(MILOCODE_UPDATE_BASE_URL) &&
+      supportedMiloCodeUpdatePlatform,
+    confirmInstall: () => confirmAppQuit(),
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
       await prepareAppQuit("auto-update quitAndInstall", "update-install");
@@ -2310,10 +2333,6 @@ app.whenReady().then(async () => {
     locale: currentApplicationLocale,
     deviceMid,
     resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-    updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
-      argv: process.argv,
-      env: process.env,
-    }),
   });
 
   if (process.platform === "darwin" || process.platform === "win32") {
@@ -2604,33 +2623,8 @@ app.whenReady().then(async () => {
   });
   registerDesktopNetworkTelemetry(logger);
 
-  // 本地未打包 dev 构建（app.isPackaged === false）必须跳过远端强制升级 gate。
-  // 原因：force-update gate 只看 ZCODE_ENV === "production"，但 dev 构建（如 dev:desktop:cua
-  // 连真实后端测 computer use）虽指向 production 后端，版本号却滞后于线上 release（feature
-  // 分支不 bump 版本），会被 release minimalVersion 误判为"需强制升级"而启动秒退。force-update
-  // 是面向打包发布客户端的安全门，对未打包 dev 运行时无意义。打包版 app.isPackaged === true，
-  // gate 照常生效，对真实用户零影响。
-  const skipForceUpdateForLocalDevRuntime = !app.isPackaged;
-  const forceUpdateGuardResult =
-    ZCODE_PRODUCT_FLAVOR === "production" && !skipForceUpdateForLocalDevRuntime
-      ? await maybeBlockStartupForForceUpdate({
-          locale: currentApplicationLocale,
-          logger,
-          endpointOrigin: await resolveCurrentZCodeEndpointOrigin(),
-          onBlocked: () => {
-            forceUpdateMainWindowCreationBlocked = true;
-          },
-        })
-      : { blocked: false };
-  if (ZCODE_PRODUCT_FLAVOR !== "production") {
-    logger.info("[force-update] Preview 跳过远端强制升级检查");
-  } else if (skipForceUpdateForLocalDevRuntime) {
-    logger.info("[force-update] 本地 dev 构建（未打包）跳过远端强制升级检查");
-  }
-  if (forceUpdateGuardResult.blocked) {
-    return;
-  }
-
+  // MiloCode 使用独立签名发布源。原 ZCode 后端的最低版本策略不属于此发行版，
+  // 不能在已关闭旧 updater 后仍请求原厂配置，导致客户端启动时被原厂版本拦截。
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");
 

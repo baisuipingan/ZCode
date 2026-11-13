@@ -678,6 +678,10 @@ export const hostInitLocalMessageSchema = z.object({
   deliveryKind: taskRealtimeHostDeliveryKindSchema.optional(),
   deviceMid: z.string().optional(),
   feedbackApiBase: z.string().url().optional(),
+  /** Main 决定固定品牌地址；仅本机初始化消息携带，不进入远程 workspace 合同。 */
+  brandAccountBaseUrl: z.string().url().optional(),
+  /** Main 按 Electron 安全存储身份隔离的本机会话路径，Host 不回退到共享业务根。 */
+  brandAccountSessionFilePath: nonEmptyStringSchema,
   workspacePath: nonEmptyStringSchema.optional(),
   workspaceIdentity: nonEmptyStringSchema.optional(),
   // 启动只预热 active workspace（desktop STARTUP_AGENT_WARMUP_LIMIT = 1），协议层同步收紧上限。
@@ -953,6 +957,23 @@ export const hostLocalMediaPreviewPathAuthorizeResultMessageSchema = z
   })
   .strict();
 
+/** 只在 Main 与可信 window Host 间传递，禁止经通用服务 RPC 暴露。 */
+export const hostBrandAccountCipherResultMessageSchema = z
+  .object({
+    type: z.literal("brand-account-cipher-result"),
+    requestId: z.uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), value: z.string().max(524_288) }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          errorCode: z.enum(["secure_storage_unavailable", "secure_storage_failed"]),
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+
 /** main → host：插件 UI 沙箱登记结果（PluginSandboxRegisterResultPayload）。 */
 export const hostPluginSandboxRegisterResultMessageSchema = z
   .object({
@@ -1122,6 +1143,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
+  hostBrandAccountCipherResultMessageSchema,
   hostPluginSandboxRegisterResultMessageSchema,
   hostCuaPipFocusChangedMessageSchema,
   hostApplicationLocaleChangedMessageSchema,
@@ -1590,6 +1612,15 @@ export const hostLocalMediaPreviewPathAuthorizeRequestResponseSchema = z
   })
   .strict();
 
+export const hostBrandAccountCipherRequestResponseSchema = z
+  .object({
+    type: z.literal("brand-account-cipher-request"),
+    requestId: z.uuid(),
+    operation: z.enum(["encrypt", "decrypt"]),
+    value: z.string().max(524_288),
+  })
+  .strict();
+
 /** host → main：登记已校验的插件 UI HTML。 */
 export const hostPluginSandboxRegisterRequestResponseSchema = z
   .object({
@@ -1764,6 +1795,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostFeedbackLogArchiveRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
+  hostBrandAccountCipherRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,
   hostNetworkTelemetryBatchResponseSchema,
   hostProviderProvisioningSourceChangedResponseSchema,

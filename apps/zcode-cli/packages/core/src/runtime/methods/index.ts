@@ -20,7 +20,7 @@ import { getToolExecutor } from "./config.js";
 import { subscribeEvents } from "./config.js";
 import { getSessionEventStore } from "./config.js";
 import { notifyExternalChildSessionEvent } from "./config.js";
-import { createChildClientPorts } from "./config.js";
+import { captureBillingScope, createChildClientPorts } from "./config.js";
 import { getContextBuilder } from "./config.js";
 import { getPendingPermissionRequests } from "./config.js";
 import { recordUserInputAutoResolutionUpdate } from "./interaction-auto-resolution.js";
@@ -229,6 +229,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.getSessionEventStore = getSessionEventStore;
   proto.notifyExternalChildSessionEvent = notifyExternalChildSessionEvent;
   proto.createChildClientPorts = createChildClientPorts;
+  proto.captureBillingScope = captureBillingScope;
   proto.getContextBuilder = getContextBuilder;
   proto.getPendingPermissionRequests = getPendingPermissionRequests;
   proto.recordUserInputAutoResolutionUpdate = recordUserInputAutoResolutionUpdate;

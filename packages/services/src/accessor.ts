@@ -3,6 +3,7 @@ import type { ITaskGroupService } from "#src/task-groups/contract.js";
 import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
 import type { IProjectService } from "#src/project/contract.js";
 import type { IGenUiService } from "./gen-ui/contract.js";
+import type { IBrandAccountService } from "./brand-account/contract.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
 import type { IHighspeedCardService } from "./highspeed/highspeedCard.js";
 import type { IPluginUiBridgeService } from "./plugin-ui-bridge/contract.js";
@@ -86,6 +87,8 @@ export interface IServiceAccessor {
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
   readonly oauthService: IOAuthService;
+  /** 品牌账号只由本机桌面 base attachment 提供，不随远端 workspace 切换。 */
+  readonly brandAccountService?: IBrandAccountService;
   /** 当前 Environment 的 Provider 配置与设置视图。 */
   readonly providerSettingsService: IProviderSettingsService;
   /** 当前 Environment Registry 发布的唯一模型选择 View。 */

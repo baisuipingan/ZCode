@@ -1,3 +1,4 @@
+import { useBrandAccount } from "@/brand-account/index.js";
 import { V4_PRIMARY_PANE_ID } from "@/v4/paneLayoutStore.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useSessionRuntimeRestart } from "@/app-shell/useWorkspaceSessionReload.js";
@@ -675,6 +676,7 @@ export function SessionPane({
   searchResultHighlightRequest,
   onSearchResultHighlightDone,
 }: SessionPaneProps) {
+  const brandAccount = useBrandAccount();
   const paneRef = useRef<HTMLDivElement>(null);
   const remoteAvailable = useRemoteConversationAvailable();
   const {
@@ -2117,6 +2119,28 @@ export function SessionPane({
       creationTaskGroupId?: string | null,
       submittedDraftText?: string,
     ): Promise<CommandAck> => {
+      // W1/W2 账号与模型调用凭据相互独立；旧会话的重试/续发/队列也不能回落官方供应商。
+      if (
+        brandAccount.enabled &&
+        brandAccount.snapshot?.inference?.status !== "configured" &&
+        ([
+          "sendText",
+          "sendGoalCommand",
+          "compact",
+          "editUserQuery",
+          "retryTurn",
+          "sendQueuedNow",
+          "resumeGoal",
+          "resumeWorkflowRun",
+          "startSavedWorkflow",
+          "resolveInteraction",
+        ].includes(type) ||
+          (type === "setAutoDrain" && payload.autoDrain === true))
+      ) {
+        const message = intl.formatMessage({ id: "brandAccount.inferencePending" });
+        toast(message);
+        throw new Error(message);
+      }
       // 离线点击/快捷键不得进入 accepted 命令恢复账本，更不能在重连后自动发送。
       if (!remoteAvailable) throw createRemoteWorkspaceDisconnectedError();
       const submission = submissionConfigFromCommand(type, payload);
@@ -2385,6 +2409,9 @@ export function SessionPane({
       }
     },
     [
+      brandAccount.enabled,
+      brandAccount.snapshot?.inference?.status,
+      intl,
       captureAcceptedModelSelection,
       newTaskComposerScope,
       baseWorkspaceServices.projectService,

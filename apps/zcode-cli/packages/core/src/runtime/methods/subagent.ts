@@ -113,6 +113,15 @@ export function createDefaultSubagentPort(
       });
     },
     runExploreAgent: async (request, options) => {
+      const task = this.runtimeTaskRegistry.get(request.agentId);
+      // task 在任何异步初始化前已注册；后台启动延迟不能把旧任务绑定到新 foreground/账号。
+      const originalBillingBinding = task
+        ? task.billingBinding
+        : (this.activeForegroundExecution?.billingBinding ??
+          this.providerRuntimeHeadersPort?.billingBinding);
+      const billingBinding = originalBillingBinding
+        ? structuredClone(originalBillingBinding)
+        : undefined;
       const offPeak = getOffPeakExecution(this);
       const childBinding = offPeak?.createChildBinding();
       if (offPeak && !offPeak.lifecycle.terminal) {
@@ -251,13 +260,21 @@ export function createDefaultSubagentPort(
             { recoverable: true },
           );
         }
-        const childModel = baseChildModelFactory({ selection: childSelection });
+        const childModel = baseChildModelFactory({
+          selection: childSelection,
+          ...(billingBinding ? { requestDependencies: { billingBinding } } : {}),
+        });
         const childModelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]> = (target) =>
           target.selection.providerId === childSelection.providerId &&
           target.selection.modelId === childSelection.modelId &&
           target.selection.options?.reasoningLevel === childSelection.options?.reasoningLevel
             ? childModel
-            : baseChildModelFactory(target);
+            : baseChildModelFactory({
+                ...target,
+                ...(billingBinding
+                  ? { requestDependencies: { ...target.requestDependencies, billingBinding } }
+                  : {}),
+              });
         const parentToolCallId = traceStringAttribute(request.traceContext, "parentToolCallId");
         // 对外交互端口（permission broker + provider runtime headers）：与 dwf actor、legacy
         // workflow child 共用同一条派生，路由身份统一落到本 runtime 的会话。
@@ -274,6 +291,7 @@ export function createDefaultSubagentPort(
             childSessionId: request.sessionId,
             description: request.description,
             parentSessionId: this.sessionId,
+            billingBinding,
             parentToolCallId,
             ...(request.traceContext.turnId === undefined
               ? {}

@@ -1,4 +1,9 @@
-import { ProxyChannel, type IDisposable, type IChannelServer } from "@zcode/rpc";
+import {
+  ProxyChannel,
+  type IDisposable,
+  type IChannelServer,
+  type IServerChannel,
+} from "@zcode/rpc";
 import {
   ServiceCollection,
   type ITerminalService,
@@ -11,11 +16,186 @@ import {
   IMcpSyncService,
   IFeedbackService,
   IGenUiService,
+  IBrandAccountService,
   createWindowProjectChangesService,
   type ServiceExposurePolicy,
   type ZCodeAgentV4ClientMode,
 } from "@zcode/services";
 import { ServiceChannels } from "@zcode/shared";
+
+const BRAND_NON_EXECUTING_V4_COMMANDS = new Set([
+  "stop",
+  "pauseGoal",
+  "cancelBackgroundWork",
+  "deleteQueueItem",
+  "setAssistantFeedback",
+  "setHighspeedMetrics",
+  "renameSession",
+  "deleteSession",
+  "applyFileRewind",
+  "discardSharedContext",
+  "editQueueItem",
+  "reorderQueueItem",
+  "switchModelConfig",
+  "switchCollaborationMode",
+  "setFollowupMode",
+  "revokeWorkspaceHookTrust",
+  "snoozeInteractionAutoResolution",
+]);
+
+const BRAND_MANAGED_V4_COMMANDS = new Set([
+  ...BRAND_NON_EXECUTING_V4_COMMANDS,
+  "createSession",
+  "createSelectionSideSession",
+  "sendText",
+  "sendGoalCommand",
+  "compact",
+  "forkAssistant",
+  "editUserQuery",
+  "retryTurn",
+  "sendQueuedNow",
+  "setAutoDrain",
+  "resolveInteraction",
+  "respondWorkspaceHookReview",
+  "toggleWorkspaceHookReviewItem",
+  "requestWorkspaceHookReview",
+  "resumeGoal",
+]);
+
+const BRAND_UNMANAGED_INFERENCE_METHODS: Readonly<Record<string, ReadonlySet<string>>> = {
+  [ServiceChannels.ZCodeTask]: new Set(["submitBotGroupInput", "deliverSessionMessage"]),
+  [ServiceChannels.ZCodeAgent]: new Set([
+    "generateWorkspaceText",
+    "testModelConnectivity",
+    "sampleMcpApp",
+    "createAutomation",
+    "updateAutomation",
+    "runAutomationNow",
+    "restartAutomation",
+  ]),
+  [ServiceChannels.PluginUiSampling]: new Set(["sample"]),
+  [ServiceChannels.OffPeakTask]: new Set(["createTask", "continueTask"]),
+};
+
+const BRAND_BLOCKED_INFERENCE_METHODS: Readonly<Record<string, ReadonlySet<string>>> = {
+  [ServiceChannels.ZCodeTask]: new Set([
+    "createTask",
+    "sendPrompt",
+    "enqueueTaskCommand",
+    "promoteTaskCommand",
+    "submitBotGroupInput",
+    "deliverSessionMessage",
+    "compactSession",
+    "goalSession",
+    "respondPermission",
+    "respondElicitation",
+  ]),
+  [ServiceChannels.ZCodeAgent]: new Set([
+    "createSession",
+    "sendPrompt",
+    "compactSession",
+    "goalSession",
+    "generateWorkspaceText",
+    "testModelConnectivity",
+    "sampleMcpApp",
+    "createAutomation",
+    "updateAutomation",
+    "runAutomationNow",
+    "restartAutomation",
+  ]),
+  [ServiceChannels.ZCodeSession]: new Set(["createSession", "promoteDeferredDraftSession"]),
+  [ServiceChannels.PluginUiSampling]: new Set(["sample"]),
+  [ServiceChannels.OffPeakTask]: new Set(["createTask", "continueTask"]),
+};
+
+function brandRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function isBrandInferenceRequest(channelName: string, command: string, args: unknown): boolean {
+  const input = brandRecord(Array.isArray(args) ? args[0] : undefined);
+  if (channelName === ServiceChannels.ZCodeAgent && command === "setAutomationEnabled")
+    return input?.enabled !== false;
+  if (channelName === ServiceChannels.ZCodeAgent && command === "controlOffPeakExecutionV4")
+    return brandRecord(input?.control)?.action !== "cancel";
+  if (
+    (channelName === ServiceChannels.ZCodeAgent || channelName === ServiceChannels.ZCodeTask) &&
+    command === "goalSession" &&
+    ["show", "pause", "clear"].includes(String(input?.action))
+  )
+    return false;
+  if (channelName === ServiceChannels.ZCodeAgent && command === "sendConversationCommandV4") {
+    const envelope = brandRecord(input?.envelope);
+    // 新增 V4 命令默认执行门禁，不能靠 UI 隐藏或旧 Provider 配置推断推理已就绪。
+    if (typeof envelope?.type !== "string") return true;
+    if (envelope.type === "setAutoDrain") return brandRecord(envelope.payload)?.autoDrain !== false;
+    return !BRAND_NON_EXECUTING_V4_COMMANDS.has(envelope.type);
+  }
+  return BRAND_BLOCKED_INFERENCE_METHODS[channelName]?.has(command) ?? false;
+}
+
+function isUnmanagedBrandInferenceRequest(
+  channelName: string,
+  command: string,
+  args: unknown,
+): boolean {
+  const input = brandRecord(Array.isArray(args) ? args[0] : undefined);
+  if (channelName === ServiceChannels.ZCodeAgent) {
+    if (command === "setAutomationEnabled") return input?.enabled !== false;
+    if (command === "controlOffPeakExecutionV4")
+      return brandRecord(input?.control)?.action !== "cancel";
+    if (command === "sendConversationCommandV4") {
+      const type = brandRecord(input?.envelope)?.type;
+      return typeof type !== "string" || !BRAND_MANAGED_V4_COMMANDS.has(type);
+    }
+  }
+  return BRAND_UNMANAGED_INFERENCE_METHODS[channelName]?.has(command) ?? false;
+}
+
+/** 只装饰已发布的本机品牌 RPC，不改变 engine、共享 ServiceCollection 或远端 attachment。 */
+export function createBrandInferenceAdmissionChannelServer(
+  inner: IChannelServer,
+  enabled: boolean,
+  account?: import("@zcode/services").IBrandAccountService,
+  assertConfigured?: () => Promise<void>,
+): IChannelServer {
+  if (!enabled) return inner;
+  return {
+    registerChannel(channelName, channel) {
+      const guarded: IServerChannel = {
+        async call(context, command, args, cancellationToken) {
+          if (isBrandInferenceRequest(channelName, command, args)) {
+            const snapshot = await account?.getSnapshot();
+            if (
+              snapshot?.status !== "authenticated" ||
+              snapshot.inference?.status !== "configured"
+            ) {
+              throw Object.assign(new Error("Agent服务尚未连接，请先登录并重新连接服务。"), {
+                code: "brand_inference_not_ready",
+                kind: "feature_disabled",
+              });
+            }
+            // 原因：独立后台入口尚未携带原工作的扣费绑定；连接成功不能扩大到这些执行来源。
+            if (isUnmanagedBrandInferenceRequest(channelName, command, args)) {
+              throw Object.assign(new Error("当前版本尚未开放此Agent执行入口。"), {
+                code: "brand_inference_entry_unavailable",
+                kind: "feature_disabled",
+              });
+            }
+            // configured是缓存投影；私有端口在提交前重读身份并校验Key到期，不向RPC暴露秘密。
+            await assertConfigured?.();
+          }
+          return channel.call(context, command, args, cancellationToken);
+        },
+        listen: (context, event, args) => channel.listen(context, event, args),
+      };
+      inner.registerChannel(channelName, guarded);
+    },
+    ready: () => inner.ready?.(),
+  };
+}
 
 const WEB_REMOTE_REPLAYABLE_ALLOWED_CHANNELS = new Set<string>([
   ServiceChannels.File,
@@ -132,9 +312,18 @@ export function exposeWindowHostAttachmentServices(params: {
   overrides?: ReadonlyMap<string, unknown>;
   attachmentScope?: { kind: "local" | "remote" | "source-settings" };
   windowServices?: ServiceCollection;
+  assertBrandInferenceConfigured?: () => Promise<void>;
   /** 手机窗口目录与 project 频道同样叠加实时交互，避免远端 scope 下列表缺「待处理」。 */
   decorateWindowProjectService?: (service: IProjectService) => IProjectService;
 }): void {
+  const server = createBrandInferenceAdmissionChannelServer(
+    params.server,
+    params.clientMode === "desktop-continuous" &&
+      params.attachmentScope?.kind === "local" &&
+      Boolean(params.services.getOptional(IBrandAccountService)),
+    params.services.getOptional(IBrandAccountService),
+    params.assertBrandInferenceConfigured,
+  );
   if (params.clientMode === "web-remote-replayable" && params.attachmentScope?.kind === "remote") {
     if (!params.windowServices) throw new Error("window-project-directory.unavailable");
     // 原 project 属于 Source，替换会破坏工作区内的 mentions 等调用；窗口目录另用完整频道组。
@@ -152,13 +341,13 @@ export function exposeWindowHostAttachmentServices(params: {
         createWindowProjectChangesService(params.windowServices.get(IBroadcastService)),
       );
     directory.exposeOnChannelServer(
-      params.server,
+      server,
       undefined,
       resolveWindowHostServiceExposurePolicy(params.clientMode),
     );
   }
   params.services.exposeOnChannelServer(
-    params.server,
+    server,
     resolveAttachmentOverrides(params.services, params.clientMode, params.overrides),
     resolveWindowHostServiceExposurePolicy(params.clientMode),
   );
@@ -167,7 +356,7 @@ export function exposeWindowHostAttachmentServices(params: {
       params.attachmentScope?.kind === "remote" ? params.windowServices! : params.services;
     if (params.attachmentScope?.kind === "remote") {
       // Source 集合不拥有反馈服务；手机切到远端后仍须复用控制端账号、设备和诊断日志。
-      params.server.registerChannel(
+      server.registerChannel(
         IFeedbackService.channelName,
         ProxyChannel.fromService(controllerServices.get(IFeedbackService)),
       );
@@ -176,7 +365,7 @@ export function exposeWindowHostAttachmentServices(params: {
     if (genUi) {
       // 发送前 listState 曾因整频道被拒而固定等待超时。只发布控制端的只读上下文接口，
       // 不把 sandbox、文件读取或状态写入连同完整 Gen UI 服务开放给手机。
-      params.server.registerChannel(
+      server.registerChannel(
         IGenUiService.channelName,
         ProxyChannel.fromService({ listState: genUi.listState.bind(genUi) }),
       );

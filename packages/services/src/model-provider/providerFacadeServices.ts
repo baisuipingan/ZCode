@@ -98,7 +98,7 @@ export interface IModelSelectionService {
 }
 
 export interface ModelSelectionConfiguredDefaultSource {
-  read(): Promise<ModelSelection | undefined>;
+  read(): Promise<ModelSelection | null | undefined>;
   onDidChange?(listener: () => void): () => void;
 }
 

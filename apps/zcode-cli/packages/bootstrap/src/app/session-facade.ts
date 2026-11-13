@@ -122,7 +122,7 @@ interface CreateSessionFacadeDeps {
   closeNodeReplBrowserBroker?: () => Promise<void> | undefined;
   configResult: ConfigResult;
   configuredMcpServers: Record<string, McpServerConfig>;
-  configuredDefaultModelSelection?: ModelSelection;
+  configuredDefaultModelSelection?: ModelSelection | null;
   executionPort: ExecutionPort;
   localSettingStore?: LocalSettingStorePort;
   logger: Logger;
@@ -647,7 +647,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
           ? resolveRegistryOwnedSelection(
               deps.providerRegistry,
               modelId,
-              deps.configuredDefaultModelSelection,
+              deps.configuredDefaultModelSelection ?? undefined,
               { allowMissingReasoning: true },
             )
           : resolveRegistryOwnedModelSelection(deps.providerRegistry, modelId);

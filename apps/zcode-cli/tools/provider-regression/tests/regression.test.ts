@@ -7,6 +7,37 @@ import { readModelRequestBody } from "#regression/usage";
 import { fixture, chatResponse, secret, architectureAnswer } from "#test/fixture";
 
 describe("provider regression", () => {
+  it("受管账户配置在静态Key测试入口拒绝，不回落环境变量或发请求", async () => {
+    const f = await fixture();
+    try {
+      const cfg = JSON.parse(await readFile(f.options.providersFile, "utf8"));
+      cfg.providerRules[0].config.access = {
+        type: "brand-managed",
+        credentialRef: "managed",
+        billingBinding: {
+          origin: "https://account.example",
+          accountRef: "user:1",
+          accountEpoch: 1,
+          policyRevision: "authorization-scope",
+        },
+      };
+      await writeFile(f.options.providersFile, JSON.stringify(cfg));
+      let called = false;
+      await expect(
+        runRegression({
+          ...f.options,
+          dryRun: true,
+          transport: async () => {
+            called = true;
+            return chatResponse();
+          },
+        }),
+      ).rejects.toThrow("此测试入口只支持 API Key Provider");
+      expect(called).toBe(false);
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
   it("只解析模型请求，字节体与 Request 观测不消费原请求", async () => {
     const body = { model: "model-a", messages: [], max_tokens: 8192 };
     const json = JSON.stringify(body);

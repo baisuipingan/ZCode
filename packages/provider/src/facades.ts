@@ -182,6 +182,7 @@ export interface ProviderSettingsCreationResult {
 
 export interface ModelSelectionModelView {
   readonly modelId: ModelId;
+  readonly displayName?: string;
   readonly config: RegistryModelConfigObject;
 }
 
@@ -517,7 +518,7 @@ export class ModelSelectionFacade {
   }
 
   getView(
-    configuredDefault?: ModelSelection,
+    configuredDefault?: ModelSelection | null,
     revision?: number,
     input?: ModelSelectionViewInput,
   ): ModelSelectionView {
@@ -580,6 +581,7 @@ export function projectModelSelectionProviderView(
       provider.models.map((model) =>
         Object.freeze({
           modelId: model.modelId,
+          ...(model.displayName ? { displayName: model.displayName } : {}),
           config: serializeRegistryModelConfig(model.config),
         }),
       ),

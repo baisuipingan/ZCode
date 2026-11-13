@@ -50,6 +50,34 @@ function promptCommand(
 }
 
 describe("RuntimeCommandQueue", () => {
+  it.each(["origin", "accountRef", "accountEpoch", "policyRevision", "unbound"] as const)(
+    "通知按原扣费绑定隔离合批，%s 不同不能合批",
+    (changed) => {
+      const queue = createRuntimeCommandQueue();
+      const billingBinding = {
+        origin: "https://account.example.invalid",
+        accountRef: "synthetic-account-a",
+        accountEpoch: 1,
+        policyRevision: "synthetic-scope",
+      };
+      const otherBinding =
+        changed === "unbound"
+          ? undefined
+          : { ...billingBinding, [changed]: changed === "accountEpoch" ? 2 : "other" };
+      const first = { ...command("next-1", "next"), billingBinding };
+      const second = { ...command("next-2", "next"), billingBinding: otherBinding };
+      const third = {
+        ...command("next-3", "next"),
+        billingBinding: structuredClone(billingBinding),
+      };
+      queue.enqueue(first);
+      queue.enqueue(second);
+      queue.enqueue(third);
+      expect(queue.dequeueNextBatch().map((item) => item.id)).toEqual([first.id, third.id]);
+      expect(queue.dequeueNextBatch().map((item) => item.id)).toEqual([second.id]);
+    },
+  );
+
   it("dequeues commands by priority before FIFO order", () => {
     const queue = createRuntimeCommandQueue();
 

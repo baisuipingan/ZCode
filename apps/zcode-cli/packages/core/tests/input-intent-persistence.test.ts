@@ -12,6 +12,12 @@ describe("persisted conversation input intent", () => {
     "persists %s with canonical goal text and queue intent",
     (mode) => {
       const intent: TurnInputIntentMetadata = {
+        billingBinding: {
+          origin: "https://account.example",
+          accountRef: "user:A",
+          accountEpoch: 1,
+          policyRevision: "policy:A",
+        },
         sourceCommandId: "command-goal",
         queueItemId: "queue-goal",
         clientId: "desktop-goal",
@@ -37,6 +43,7 @@ describe("persisted conversation input intent", () => {
         kind: "sendGoalCommand",
         text: "X",
         modelSelection: intent.modelSelection,
+        billingBinding: intent.billingBinding,
         mode,
         sharedContextRefs: intent.sharedContextRefs,
         genUiContext: intent.genUiContext,

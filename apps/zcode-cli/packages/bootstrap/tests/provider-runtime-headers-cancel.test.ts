@@ -10,6 +10,41 @@ const workspace = {
   workspaceIdentity: "ssh:host:/work",
   workspaceKey: "ssh:host:/work",
 };
+it("托管结果反馈只发送严格私有通知，不创建RPC请求或持久事件", () => {
+  const notify = vi.fn();
+  const requestClient = vi.fn();
+  const port = createProviderRuntimeHeadersPort(
+    { notify, requestClient } as unknown as ZCodeProtocolAgentServerContext,
+    workspace,
+  );
+  const outcome = {
+    kind: "turn_settled" as const,
+    billingBinding: {
+      origin: "https://example.invalid",
+      accountRef: "A",
+      accountEpoch: 1,
+      policyRevision: "scope",
+    },
+  };
+  port.reportManagedOutcome?.({
+    sessionId: "session",
+    outcome,
+    traceContext: { traceId: "trace" },
+  });
+  expect(notify).toHaveBeenCalledExactlyOnceWith({
+    method: "interaction/managedInferenceOutcome",
+    trace: { traceId: "trace" },
+    params: { workspace, sessionId: "session", outcome },
+  });
+  expect(requestClient).not.toHaveBeenCalled();
+  expect(() =>
+    port.reportManagedOutcome?.({
+      sessionId: "session",
+      outcome: { ...outcome, key: "must-not-send" } as never,
+    }),
+  ).toThrow();
+  expect(notify).toHaveBeenCalledTimes(1);
+});
 it("真实工厂同样装配唯一请求端口，完整账号事实透传而不写旧 ModelRef", async () => {
   const requestAuth = { apiKey: "team-key", headers: { "X-Team": "team-a" } };
   const requestClient = vi.fn(
@@ -237,4 +272,52 @@ it("闲时 scope 经过执行投影和私有反向 RPC 保留，SSH workspace �
       },
     }),
   ).resolves.toMatchObject({ requestAuth: { apiKey: "fresh-pat", accountScope } });
+});
+
+it("品牌凭据经过真实反向RPC校验，保留Key ID和摘要scope并拒绝明文scope", async () => {
+  const { ZCodeProtocolAgentServer } = await import("../src/zcode-protocol/server.js");
+  const { zcodeProviderRuntimeHeadersRequestParamsSchema } = await import("@zcode/shared");
+  const server = new ZCodeProtocolAgentServer({ createZCodeApp: vi.fn() });
+  const sink = vi.fn();
+  server.setNotificationSink(sink);
+  const context = (server as unknown as { context: ZCodeProtocolAgentServerContext }).context;
+  const port = createProviderRuntimeHeadersPort(context, workspace);
+  const billingBinding = {
+    origin: "https://managed.example",
+    accountRef: "user:1",
+    accountEpoch: 1,
+    policyRevision: "policy-1",
+  };
+  const input = {
+    traceContext: { traceId: "managed-schema-trace" },
+    sessionId: "managed-session",
+    providerId: "milorouter-managed",
+    modelId: "agent-model",
+    managedAccess: { credentialRef: "workbench:1", billingBinding },
+    reason: "model-request" as const,
+  };
+  const invalid = port.refreshBeforeModelRequest(input);
+  // 必须立刻观察拒绝，避免handleMessage处理schema失败时产生未处理的promise。
+  const rejected = expect(invalid).rejects.toThrow();
+  const first = sink.mock.calls[0]![0];
+  expect(zcodeProviderRuntimeHeadersRequestParamsSchema.parse(first.params)).toMatchObject({
+    managedAccess: input.managedAccess,
+    workspace,
+  });
+  await server.handleMessage({
+    id: first.id,
+    result: {
+      headersApplied: true,
+      requestAuth: { apiKey: "managed-key", accountScope: "https://managed.example:user:1" },
+    },
+  });
+  await rejected;
+
+  const valid = port.refreshBeforeModelRequest(input);
+  const response = {
+    headersApplied: true,
+    requestAuth: { apiKey: "managed-key", apiKeyId: "123", accountScope: "a".repeat(64) },
+  };
+  await server.handleMessage({ id: sink.mock.calls[1]![0].id, result: response });
+  await expect(valid).resolves.toEqual(response);
 });

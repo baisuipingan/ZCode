@@ -1,9 +1,8 @@
 import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { UpdateStatusDialog } from "@/UpdateStatusDialog.js";
-import { formatUpdateReleaseDate, getLocalizedUpdateReleaseNotes } from "@/updateReleaseNotes.js";
+import { formatUpdateReleaseDate } from "@/updateReleaseNotes.js";
 import {
   deriveUpdateStatusViewModel,
   isUpdateActionCompleted,
@@ -29,19 +28,9 @@ export function UpdateStatusDialogController({
   showOverlay?: boolean;
 }) {
   const { intl, locale } = useZCodeIntl();
-  const requestConfirmation = useConfirmDialog();
-  const [autoDownloadAndInstallUpdates, setAutoDownloadAndInstallUpdates] = useState(false);
   const [updateActionInFlight, setUpdateActionInFlightState] = useState<UpdateActionInFlight>(null);
   const updateActionInFlightRef = useRef<typeof updateActionInFlight>(null);
-  const releaseNotesCacheRef = useRef(
-    new Map<
-      string,
-      {
-        releaseDateLabel: string | null;
-        releaseNotes: { title: string; markdown: string };
-      }
-    >(),
-  );
+  const releaseDateCacheRef = useRef(new Map<string, string>());
   const setUpdateActionInFlight = useCallback((nextAction: typeof updateActionInFlight) => {
     updateActionInFlightRef.current = nextAction;
     setUpdateActionInFlightState(nextAction);
@@ -63,10 +52,6 @@ export function UpdateStatusDialogController({
     releaseNotesPayload: updateReleaseNotesPayload,
     skippableVersion,
   } = renderedUpdateStatusViewModel;
-  const localizedUpdateReleaseNotes = getLocalizedUpdateReleaseNotes(
-    updateReleaseNotesPayload,
-    locale,
-  );
   const formattedReleaseDate = formatUpdateReleaseDate(
     updateReleaseNotesPayload?.releaseDate,
     locale,
@@ -85,65 +70,24 @@ export function UpdateStatusDialogController({
   }, [updateStatusViewModel]);
 
   useEffect(() => {
-    let disposed = false;
-
-    const refreshAutoUpdatePreferences = () => {
-      void platform
-        .getAutoUpdatePreferences?.()
-        .then((preferences) => {
-          if (!disposed) {
-            setAutoDownloadAndInstallUpdates(preferences.autoDownloadAndInstallUpdates);
-          }
-        })
-        .catch(() => {
-          if (!disposed) {
-            setAutoDownloadAndInstallUpdates(false);
-          }
-        });
-    };
-
-    refreshAutoUpdatePreferences();
-    const disposeSettingsChanged =
-      platform.onSettingsChanged?.(refreshAutoUpdatePreferences) ?? (() => {});
-
-    return () => {
-      disposed = true;
-      disposeSettingsChanged();
-    };
-  }, [platform]);
-
-  useEffect(() => {
-    if (!releaseNotesCacheKey || !localizedUpdateReleaseNotes) {
+    if (!releaseNotesCacheKey || !formattedReleaseDate) {
       return;
     }
 
-    // 下载中会隐藏更新日志，但 electron-updater 的 update-downloaded
-    // 事件在部分平台只稳定带 version。缓存当前版本的说明，下载完成后即使 ready
-    // 状态缺少 releaseNotes，也能把刚才隐藏的内容恢复显示。
-    releaseNotesCacheRef.current.set(releaseNotesCacheKey, {
-      releaseDateLabel: formattedReleaseDate,
-      releaseNotes: localizedUpdateReleaseNotes,
-    });
-    if (releaseNotesCacheRef.current.size > 8) {
-      const oldestCacheKey = releaseNotesCacheRef.current.keys().next().value;
+    // 下载完成事件可能只含 version，缓存当前版本日期，避免标题日期闪失。
+    releaseDateCacheRef.current.set(releaseNotesCacheKey, formattedReleaseDate);
+    if (releaseDateCacheRef.current.size > 8) {
+      const oldestCacheKey = releaseDateCacheRef.current.keys().next().value;
       if (oldestCacheKey) {
-        releaseNotesCacheRef.current.delete(oldestCacheKey);
+        releaseDateCacheRef.current.delete(oldestCacheKey);
       }
     }
-  }, [formattedReleaseDate, localizedUpdateReleaseNotes, releaseNotesCacheKey]);
+  }, [formattedReleaseDate, releaseNotesCacheKey]);
 
-  const cachedReleaseNotes = releaseNotesCacheKey
-    ? releaseNotesCacheRef.current.get(releaseNotesCacheKey)
+  const cachedReleaseDate = releaseNotesCacheKey
+    ? releaseDateCacheRef.current.get(releaseNotesCacheKey)
     : undefined;
-  const restoredUpdateReleaseNotes =
-    localizedUpdateReleaseNotes ?? cachedReleaseNotes?.releaseNotes ?? null;
-  const restoredReleaseDate = formattedReleaseDate ?? cachedReleaseNotes?.releaseDateLabel ?? null;
-  const visibleUpdateReleaseNotes =
-    dialogPhase === "downloading" ? null : restoredUpdateReleaseNotes;
-  const handleOpenReleaseNotesExternalUrl = useCallback(
-    (url: string) => platform.openExternal(url),
-    [platform],
-  );
+  const restoredReleaseDate = formattedReleaseDate ?? cachedReleaseDate ?? null;
   const handleDownloadUpdate = useCallback(async () => {
     if (updateActionInFlightRef.current) {
       return;
@@ -160,18 +104,6 @@ export function UpdateStatusDialogController({
       throw error;
     }
   }, [platform, setUpdateActionInFlight]);
-  const handleAutoDownloadAndInstallUpdatesChange = useCallback(
-    async (enabled: boolean) => {
-      setAutoDownloadAndInstallUpdates(enabled);
-      await platform.setAutoDownloadAndInstallUpdates?.(enabled);
-      if (enabled && updateState?.kind === "update-available") {
-        // 功能原因：用户在“已发现更新”弹窗里勾选自动下载时，期望当前版本也进入自动流程。
-        // 这里只触发同一个下载入口；真正是否下载、缓存命中和状态广播仍由 main 进程裁决。
-        await handleDownloadUpdate();
-      }
-    },
-    [handleDownloadUpdate, platform, updateState?.kind],
-  );
   const handleCancelDownload = useCallback(async () => {
     if (updateActionInFlightRef.current) {
       return;
@@ -203,37 +135,17 @@ export function UpdateStatusDialogController({
       return;
     }
 
-    const activity = await platform.getDesktopSessionActivity?.();
-    const runningTaskCount = activity?.runningAgentSessionCount ?? 0;
-    if (runningTaskCount > 0) {
-      const confirmed = await requestConfirmation({
-        title: intl.formatMessage(
-          { id: "updateReady.confirm.title" },
-          {
-            version: displayVersion ?? "",
-          },
-        ),
-        description: intl.formatMessage({
-          id: "updateReady.confirm.description",
-        }),
-        confirmLabel: intl.formatMessage({ id: "updateReady.confirm.ok" }),
-        cancelLabel: intl.formatMessage({ id: "updateReady.confirm.cancel" }),
-      });
-      if (!confirmed) {
-        return;
-      }
-    }
-
     // 重启安装之前是 fire-and-forget，renderer 发完 IPC 就关闭弹窗。
     // dev/mock 下 updater 若没有接管安装，用户只会看到弹窗消失，误以为按钮没有响应。
     setUpdateActionInFlight("restart");
     try {
+      // 安装中断确认由 Main 的最后退出屏障唯一负责，避免 Renderer 再弹一次。
       await platform.quitAndInstallUpdate();
-    } catch (error) {
+    } finally {
+      // Main 正常返回也可能是用户取消；必须解锁，不能只在异常时释放等待状态。
       setUpdateActionInFlight(null);
-      throw error;
     }
-  }, [displayVersion, intl, platform, requestConfirmation, setUpdateActionInFlight]);
+  }, [platform, setUpdateActionInFlight]);
 
   useEffect(() => {
     if (!displayVersion && updateState !== null) {
@@ -253,7 +165,7 @@ export function UpdateStatusDialogController({
 
     // 退出准备和 Windows 安装器交接可能超过 5 秒；旧的统一 ACK 定时器会在
     // 应用真正退出前恢复“重启以更新”，让用户误判失败并重复点击。restart 成功路径保持
-    // pending 直到应用退出，只有 IPC 明确失败时才由调用处 catch 恢复按钮。
+    // pending 直到 IPC 完成或应用退出，正常取消和异常均由调用处 finally 恢复按钮。
     if (updateActionInFlight === "restart") {
       if (updateState !== null && updateState.kind !== "update-downloaded") {
         // main 会在退出准备失败时广播 error/idle。即使 IPC reject 因窗口
@@ -282,17 +194,13 @@ export function UpdateStatusDialogController({
 
   return (
     <UpdateStatusDialog
-      autoDownloadAndInstallUpdates={autoDownloadAndInstallUpdates}
       displayVersion={displayVersion}
       edgeToEdge={edgeToEdge}
       intl={intl}
       isUpdateActionPending={updateActionInFlight !== null}
-      localizedUpdateReleaseNotes={visibleUpdateReleaseNotes}
-      onAutoDownloadAndInstallUpdatesChange={handleAutoDownloadAndInstallUpdatesChange}
       onCancelDownload={handleCancelDownload}
       onDownloadUpdate={handleDownloadUpdate}
       onOpenChange={onOpenChange}
-      onOpenReleaseNotesExternalUrl={handleOpenReleaseNotesExternalUrl}
       onRestartUpdate={handleRestartUpdate}
       onSkipUpdate={handleSkipUpdate}
       open={open}

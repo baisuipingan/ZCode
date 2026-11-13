@@ -5,6 +5,7 @@
 // 本文件承载「registry + journal → 对外读面」的纯合成规则（无 I/O、无状态）。
 
 import type { DwfRunListItem, DwfRunSessionListItem } from "@zcode/adapters/storage";
+import type { RuntimeBillingScope } from "@zcode/core";
 import {
   boundDynamicWorkflowRunEventPayload,
   DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES,
@@ -50,6 +51,8 @@ export { artifactsOf };
 
 /** 注册表条目：一个在飞或近期结算的 run。 */
 export interface RunRegistryEntry {
+  /** 仅内存存活的原归属；不进入 journal、快照、日志或模型上下文。 */
+  billingScope?: RuntimeBillingScope;
   controller: AbortController;
   startedAt: Date;
   toolCallId?: string;

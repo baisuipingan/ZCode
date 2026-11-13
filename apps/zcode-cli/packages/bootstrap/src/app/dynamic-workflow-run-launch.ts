@@ -81,6 +81,7 @@ export interface CompiledDynamicWorkflowScript {
 }
 
 interface LaunchDynamicWorkflowRunInput {
+  billingScope?: import("@zcode/core").RuntimeBillingScope;
   caps: Caps;
   compiled: CompiledDynamicWorkflowScript;
   cwd: string;
@@ -159,6 +160,8 @@ interface LaunchDynamicWorkflowRunInput {
 export function launchDynamicWorkflowRun(
   input: LaunchDynamicWorkflowRunInput,
 ): Promise<RunSettlement> {
+  // actor 在脚本后续阶段才真正创建；闭包只持有本次 launch 的克隆，不读取父会话当前状态。
+  const billingScope = structuredClone(input.billingScope ?? {});
   const {
     args,
     caps,
@@ -252,7 +255,10 @@ export function launchDynamicWorkflowRun(
           }),
           // 路由与载荷分开：事件必须落在**发起该 run 的**会话里，而 parentSessionId 是
           // 判断"是不是那个会话"的唯一依据。
-          parentSessionId === undefined ? {} : { parentSessionId },
+          {
+            ...(parentSessionId === undefined ? {} : { parentSessionId }),
+            billingScope: structuredClone(billingScope),
+          },
         );
       } catch (error) {
         deps.logger?.warn?.("Dynamic workflow run event hook failed", {
@@ -309,6 +315,7 @@ export function launchDynamicWorkflowRun(
       modelRequestAdmission,
     }) => {
       const runtime = deps.createActorRuntime({
+        billingScope: structuredClone(billingScope),
         runId,
         sessionId,
         actor,

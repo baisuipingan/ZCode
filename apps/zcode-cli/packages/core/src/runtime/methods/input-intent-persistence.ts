@@ -34,6 +34,7 @@ export function buildPersistedConversationInputIntent(
     text: intent.text ?? text,
     attachments: intent.attachmentRefs ?? [],
     ...(intent.modelSelection ? { modelSelection: intent.modelSelection } : {}),
+    ...(intent.billingBinding ? { billingBinding: intent.billingBinding } : {}),
     ...(intent.mode ? { mode: intent.mode } : {}),
     ...(intent.planEnabled !== undefined ? { planEnabled: intent.planEnabled } : {}),
     ...(intent.genUiContext !== undefined ? { genUiContext: intent.genUiContext } : {}),

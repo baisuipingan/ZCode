@@ -7,19 +7,19 @@ export const ZCODE_PREVIEW_IDENTITY_ENV = "ZCODE_PREVIEW_IDENTITY";
 
 const PRODUCTION_IDENTITY = Object.freeze({
   flavor: "production",
-  appId: "dev.zcode.app",
-  productName: "ZCode",
-  linuxExecutableName: "zcode",
-  linuxPackageName: "zcode",
+  appId: "app.milo.code",
+  productName: "MiloCode",
+  linuxExecutableName: "milocode",
+  linuxPackageName: "milocode",
   cuaHelperInstallVariant: null,
 });
 
 const PREVIEW_IDENTITY = Object.freeze({
   flavor: "preview",
-  appId: "dev.zcode.app.preview",
-  productName: "ZCode Preview",
-  linuxExecutableName: "zcode-preview",
-  linuxPackageName: "zcode-preview",
+  appId: "app.milo.code.preview",
+  productName: "MiloCode Preview",
+  linuxExecutableName: "milocode-preview",
+  linuxPackageName: "milocode-preview",
   cuaHelperInstallVariant: "preview",
 });
 
@@ -68,6 +68,18 @@ export function resolveDesktopProductIdentity(env = process.env) {
 }
 
 /**
+ * 运行名称消费编译期 flavor，不能靠安装后机器的后端环境重判产品身份。
+ * @param {string} flavor
+ * @param {{isPackaged?: boolean, applicationName?: string}} [runtime]
+ */
+export function resolveDesktopRuntimeApplicationNameForFlavor(flavor, runtime = {}) {
+  const override = runtime.applicationName?.trim();
+  if (override) return override;
+  if (runtime.isPackaged === false) return "ZCode Dev";
+  return desktopProductIdentities[flavor === "preview" ? "preview" : "production"].productName;
+}
+
+/**
  * 产物文件名后缀标记的是后端环境而不是身份：`_TEST` 只出现在测试后端的安装包上。
  * 生产后端的 Preview 包靠 productName（`ZCode Preview-<version>-...`）与正式包区分。
  */
@@ -84,7 +96,7 @@ export function resolveDesktopArtifactSuffix(env = process.env) {
  */
 export function resolveWindowsAppUserModelIdForFlavor(flavor, runtime = { isPackaged: true }) {
   if (runtime.isPackaged === false) {
-    return "cn.aminer.zcode";
+    return "app.milo.code.dev";
   }
   return desktopProductIdentities[flavor === "preview" ? "preview" : "production"].appId;
 }

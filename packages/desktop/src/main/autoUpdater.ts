@@ -6,14 +6,13 @@ import semver from "semver";
 const { autoUpdater } = pkg;
 import {
   DEFAULT_LOCALE,
-  DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-  TEST_ZCODE_ENDPOINT_ORIGIN,
+  MILOCODE_UPDATE_BASE_URL,
+  MILOCODE_UPDATE_PUBLIC_KEYS_JSON,
   PlatformChannels,
   ZCODE_VERSION,
   desktopMenuMessageIds,
   formatDesktopMenuMessage,
   getDesktopMenuMessage,
-  resolveRuntimeZCodeEndpointOrigin,
   type ElectronReleaseChannel,
   type Locale,
   type PostUpdateReleaseNotesPayload,
@@ -21,18 +20,29 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
-import { verifyWindowsAuthenticodeSignature } from "../../scripts/powershell-command.mjs";
-import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
+import {
+  MiloCodeSignedUpdateProvider,
+  validateMiloCodeUpdatePolicy,
+  verifyMiloCodeRelease,
+  verifyMiloCodeUpdateArtifact,
+  type MiloCodeUpdateTrustPolicy,
+} from "./milocode-update-trust/index.js";
+import { createMiloCodeMacUpdater } from "./milocode-desktop-update/index.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
 const AUTO_UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;
 const AUTO_UPDATE_VISIBLE_POLL_INTERVAL_MS = 2 * 60 * 1000;
-const UPDATE_FEED_URL_ENV = "ZCODE_UPDATE_FEED_URL";
-const UPDATE_FEED_URL_SWITCH = "--zcode-update-feed-url";
 const DEV_AUTO_UPDATE_ENV = "ZCODE_AUTO_UPDATE_DEV";
 const DEV_AUTO_UPDATE_SWITCH = "--zcode-auto-update-dev";
 const DEV_AUTO_UPDATE_VERSION_ENV = "ZCODE_AUTO_UPDATE_DEV_VERSION";
 const DEV_AUTO_UPDATE_VERSION_SWITCH = "--zcode-auto-update-dev-version";
+type SignedUpdateTarget = Readonly<{ version: string; envelope: string }>;
+let signedUpdatePolicy: MiloCodeUpdateTrustPolicy | null = null;
+let availableSignedTarget: SignedUpdateTarget | null = null;
+let downloadingSignedTarget: SignedUpdateTarget | null = null;
+let readySignedTarget: SignedUpdateTarget | null = null;
+let macNativeUpdaterSelected = false;
+let miloCodeMacUpdater: ReturnType<typeof createMiloCodeMacUpdater> | null = null;
 let readyUpdateVersion: string | null = null;
 let readyUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let readyUpdateRestoredFromPendingReleaseNotes = false;
@@ -56,6 +66,7 @@ let downloadCancellationToken: CancellationToken | null = null;
 let readyUpdateChannel: ElectronReleaseChannel | null = null;
 let pendingManifestReleaseChannelRefresh: ElectronReleaseChannel | null = null;
 let onBeforeQuitAndInstall: (() => void | Promise<void>) | undefined;
+let confirmUpdateInstall: (() => boolean | Promise<boolean>) | undefined;
 const acknowledgedPostUpdateReleaseNotesVersions = new Set<string>();
 const cancelledDownloadTokens = new WeakSet<CancellationToken>();
 let pendingCancelledDownloadErrorCount = 0;
@@ -63,7 +74,7 @@ let autoUpdaterSettingService: SettingServiceLike | undefined;
 // initAutoUpdater({ enabled: false }) 只清轮询并 return，electron-updater 实例保持未配置
 // （占位 feed、autoDownload 默认值）。任何漏改成按身份判断的入口若仍调用手动检查，
 // 都会对占位 feed 发真实请求。这里记住“本 flavor 已禁用”，让手动检查在模块内部 fail-closed。
-let autoUpdaterDisabledForProductFlavor = false;
+let autoUpdaterDisabledForProductFlavor = true;
 
 type SettingServiceLike = Pick<ISettingService, "get" | "update">;
 
@@ -74,6 +85,7 @@ type ReleaseNoteInfoLike = {
 
 type UpdateDownloadedInfoLike = {
   version: string;
+  milocodeSignedEnvelope?: string;
   path?: string | null;
   files?: Array<{ url?: string | null } | null> | null;
   packages?: Record<string, { path?: string | null } | null> | null;
@@ -115,6 +127,7 @@ let forceAutoUpdateLastLoggedProgressBucket: number | null = null;
 interface InitAutoUpdaterOptions {
   enabled?: boolean;
   onBeforeQuitAndInstall?: () => void | Promise<void>;
+  confirmInstall?: () => boolean | Promise<boolean>;
   settingService?: SettingServiceLike;
   locale?: Locale;
   updateFeedSource?: RuntimeUpdateFeedSource;
@@ -123,8 +136,10 @@ interface InitAutoUpdaterOptions {
 }
 
 let quitAndInstallState: "idle" | "preparing" | "installing" | "recovering" = "idle";
-let pendingDownloadedUpdate: { token: CancellationToken; info: UpdateDownloadedInfoLike } | null =
-  null;
+let pendingDownloadedUpdate: {
+  token: CancellationToken;
+  info: UpdateDownloadedInfoLike;
+} | null = null;
 
 function isUpdateTargetLocked(): boolean {
   return quitAndInstallState !== "idle";
@@ -441,6 +456,7 @@ function buildDownloadProgressState(
 }
 
 async function quitAndInstallUpdate(rejectUnavailable = false) {
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor) return;
   if (quitAndInstallState !== "idle") {
     logger.info("[auto-update] quitAndInstall already in flight");
     return;
@@ -486,21 +502,34 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   // 也不能让一次挂起的后台网络请求扣押用户已经选择的安装。
   quitAndInstallState = "preparing";
   logger.info("[auto-update] user requested quit and install");
-  if (process.platform === "win32" && app.isPackaged) {
-    try {
-      // 6.8.10 命中已下载缓存时跳过下载 hook；在退出服务前复查实际待安装文件。
-      // 读取既有 updater 的安装路径，避免另存一份路径导致 ready 与安装目标不同步。
-      const installerPath = (autoUpdater as unknown as { readonly installerPath: string | null })
-        .installerPath;
-      if (!installerPath) throw new Error("Windows update installer is missing");
-      const failure = await verifyWindowsAuthenticodeSignature(installerPath);
-      if (failure) throw new Error(failure);
-    } catch (error) {
+  const installTarget = readySignedTarget;
+  try {
+    // 菜单和 IPC 都经过同一确认屏障；等待确认期间锁住目标与重复点击。
+    if (!(await (confirmUpdateInstall?.() ?? false))) {
       quitAndInstallState = "idle";
-      handleAutoUpdateFailure(error, "Windows update signature verification failed");
-      if (rejectUnavailable) throw error;
       return;
     }
+  } catch (error) {
+    quitAndInstallState = "idle";
+    logger.error("[auto-update] install confirmation failed:", error);
+    if (rejectUnavailable) throw error;
+    return;
+  }
+  let installerPath: string;
+  try {
+    if (!installTarget || installTarget.version !== readyUpdateVersion) {
+      throw new Error("MiloCode update has no verified installation target");
+    }
+    installerPath = getWindowsInstallerPath();
+    await verifySignedInstaller(installTarget, installerPath);
+    if (readySignedTarget !== installTarget || readyUpdateVersion !== installTarget.version) {
+      throw new Error("MiloCode update target changed before shutdown");
+    }
+  } catch (error) {
+    quitAndInstallState = "idle";
+    handleAutoUpdateFailure(error, "MiloCode update verification failed");
+    if (rejectUnavailable) throw error;
+    return;
   }
   // macOS 上 quitAndInstall() 在关窗前不会先走 app.before-quit。
   // 如果仍然只靠 before-quit 去放行窗口 close，现有的“红绿灯关闭=隐藏窗口”逻辑会把退出拦住，
@@ -523,10 +552,19 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  if (!readyUpdateVersion || !isReadyUpdateCurrentTarget()) {
-    // 后台结果已锁定，只有原生 staging 错误能使 ready 失效。服务已经清理，
-    // 此时不能仅解除标记停留在旧窗口，必须重启恢复 Host/Agent 和远控连接。
+  try {
+    // 退出准备可能耗时，正式交接安装器前重新绑定目标并校验磁盘文件。
+    if (!installTarget || readySignedTarget !== installTarget || !isReadyUpdateCurrentTarget()) {
+      throw new Error("MiloCode update target changed after shutdown preparation");
+    }
+    await verifySignedInstaller(installTarget, installerPath);
+    if (readySignedTarget !== installTarget || readyUpdateVersion !== installTarget.version) {
+      throw new Error("MiloCode update target changed during final verification");
+    }
+  } catch (error) {
+    handleAutoUpdateFailure(error, "MiloCode final installation verification failed");
     recoverFromFailedUpdateInstall();
+    if (rejectUnavailable) throw error;
     return;
   }
 
@@ -740,77 +778,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
-function redactUpdateFeedUrlForLog(value: string): string {
-  try {
-    const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    if (url.search) {
-      url.search = "?<redacted>";
-    }
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return "<invalid-url>";
-  }
-}
-
-function readSwitchValue(argv: readonly string[], switchName: string): string | undefined {
-  const equalsPrefix = `${switchName}=`;
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    // 协议注册使用 -- 分隔外部 URL；其后的内容不能重新解释为应用开关。
-    if (arg === "--") break;
-    if (!arg) {
-      continue;
-    }
-    if (arg.startsWith(equalsPrefix)) {
-      return arg.slice(equalsPrefix.length).trim() || undefined;
-    }
-    if (arg === switchName) {
-      const next = argv[index + 1];
-      if (next && !next.startsWith("--")) {
-        return next.trim() || undefined;
-      }
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
+/** 更新源是构建时信任边界，启动参数和环境变量不能替换。 */
 export function resolveUpdateFeedSourceFromStartupConfig(
-  options: {
+  _options: {
     argv?: readonly string[];
     env?: Record<string, string | undefined>;
   } = {},
 ): RuntimeUpdateFeedSource | undefined {
-  // Windows 深链中的引号可拆出额外 argv。正式包必须忽略调试更新源，
-  // 不能让不可信启动参数（或继承的环境变量）接管安装包下载来源。
-  if (app.isPackaged) return undefined;
-  const argv = options.argv ?? process.argv;
-  const env = options.env ?? process.env;
-  const feedUrl = readSwitchValue(argv, UPDATE_FEED_URL_SWITCH) ?? env[UPDATE_FEED_URL_ENV]?.trim();
-  return feedUrl
-    ? {
-        url: feedUrl,
-      }
-    : undefined;
+  return undefined;
 }
 
 async function resolveUpdateReleaseChannel(
-  settingService: SettingServiceLike | undefined,
+  _settingService: SettingServiceLike | undefined,
 ): Promise<ElectronReleaseChannel> {
-  if (!settingService) {
-    return "stable";
-  }
-
-  try {
-    const settings = await settingService.get();
-    return settings.receivePreviewUpdates === true ? "preview" : "stable";
-  } catch (error) {
-    logger.warn("[auto-update] read preview update setting failed:", error);
-    return "stable";
-  }
+  return "stable";
 }
 
 async function syncAutoUpdateCheckChannelFromSettings(
@@ -834,41 +815,74 @@ async function syncAutoUpdateCheckChannelFromSettings(
   activeAutoUpdateCheckChannel = nextChannel;
 }
 
-function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
-  // 在更新器装配边界再次约束，避免内部调用绕过启动配置解析。
-  const manifestUrl = app.isPackaged ? undefined : options.updateFeedSource?.url.trim();
+function applyMiloCodeSignedUpdateProvider(): void {
+  if (!MILOCODE_UPDATE_BASE_URL || process.platform !== "win32" || process.arch !== "x64") {
+    throw new Error("MiloCode update source is not configured for this platform");
+  }
+  const publicKeys: unknown = JSON.parse(MILOCODE_UPDATE_PUBLIC_KEYS_JSON);
+  if (
+    !isRecord(publicKeys) ||
+    Object.values(publicKeys).some((value) => typeof value !== "string")
+  ) {
+    throw new Error("MiloCode update public keys are invalid");
+  }
+  const policy: MiloCodeUpdateTrustPolicy = Object.freeze({
+    productId: "app.milo.code",
+    platform: "win32-x64",
+    manifestUrl: new URL("stable/win32-x64/latest.json", MILOCODE_UPDATE_BASE_URL).href,
+    releaseBaseUrl: new URL(MILOCODE_UPDATE_BASE_URL).href,
+    publicKeys: Object.freeze({ ...publicKeys }) as Readonly<Record<string, string>>,
+  });
+  validateMiloCodeUpdatePolicy(policy);
+  signedUpdatePolicy = policy;
   autoUpdater.setFeedURL({
     provider: "custom",
-    updateProvider: ManifestUpdateProvider,
-    endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-    ...(manifestUrl ? { manifestUrl } : {}),
-    releasePlatform: getElectronReleasePlatform(),
-    deviceMid: options.deviceMid,
-    resolveEndpointOrigin: async () => {
-      const origin = await (
-        options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env))
-      )();
-      // 通用后端覆盖不是更新发布授权；正式包只允许既有官方 HTTPS 入口。
-      if (
-        app.isPackaged &&
-        origin !== DEFAULT_ZCODE_ENDPOINT_ORIGIN &&
-        origin !== TEST_ZCODE_ENDPOINT_ORIGIN
-      ) {
-        return DEFAULT_ZCODE_ENDPOINT_ORIGIN;
-      }
-      return origin;
-    },
-    resolveReleaseChannel: async () => {
-      const channel = await resolveUpdateReleaseChannel(options.settingService);
-      if (!isUpdateTargetLocked()) availableUpdateChannel = channel;
-      return channel;
-    },
+    updateProvider: MiloCodeSignedUpdateProvider,
+    miloCodePolicy: policy,
   });
-  logger.info(
-    manifestUrl
-      ? `[auto-update] service manifest provider applied platform=${getElectronReleasePlatform()} manifestUrl=${redactUpdateFeedUrlForLog(manifestUrl)}`
-      : `[auto-update] service manifest provider applied platform=${getElectronReleasePlatform()}`,
-  );
+  logger.info("[auto-update] MiloCode signed stable provider applied platform=win32-x64");
+}
+
+function readSignedUpdateTarget(info: UpdateDownloadedInfoLike): SignedUpdateTarget {
+  if (!signedUpdatePolicy || typeof info.milocodeSignedEnvelope !== "string") {
+    throw new Error("MiloCode update is missing its signed release context");
+  }
+  const payload = verifyMiloCodeRelease(info.milocodeSignedEnvelope, signedUpdatePolicy);
+  if (payload.version !== info.version) throw new Error("MiloCode update version changed");
+  return Object.freeze({
+    version: payload.version,
+    envelope: info.milocodeSignedEnvelope,
+  });
+}
+
+function getWindowsInstallerPath(): string {
+  const installerPath = (autoUpdater as unknown as { readonly installerPath: string | null })
+    .installerPath;
+  if (!installerPath) throw new Error("MiloCode update installer is missing");
+  return installerPath;
+}
+
+async function verifySignedInstaller(
+  target: SignedUpdateTarget,
+  installerPath: string,
+): Promise<void> {
+  if (!signedUpdatePolicy) throw new Error("MiloCode update trust policy is unavailable");
+  await verifyMiloCodeUpdateArtifact(installerPath, target.envelope, signedUpdatePolicy, {
+    expectedVersion: target.version,
+  });
+  if (getWindowsInstallerPath() !== installerPath) {
+    throw new Error("MiloCode update installer changed during verification");
+  }
+}
+
+export function isMiloCodeMacUpdaterActive(): boolean {
+  return miloCodeMacUpdater !== null;
+}
+
+export function openMiloCodeMacUpdateStatus(): boolean {
+  if (!miloCodeMacUpdater) return false;
+  miloCodeMacUpdater.checkForUpdates();
+  return true;
 }
 
 function pickFallbackReleaseNotesMarkdown(
@@ -1015,16 +1029,19 @@ function sendManualCheckResult(payload: UpdateCheckResultPayload) {
 
 function clearAvailableUpdateState() {
   availableUpdateReleaseNotes = null;
+  availableSignedTarget = null;
 }
 
 function clearDownloadingUpdateState() {
   downloadingUpdateVersion = null;
+  downloadingSignedTarget = null;
   downloadingUpdateReleaseNotes = null;
   downloadingUpdateChannel = null;
 }
 
 function clearReadyUpdateState() {
   readyUpdateVersion = null;
+  readySignedTarget = null;
   readyUpdateReleaseNotes = null;
   readyUpdateChannel = null;
   readyUpdateRestoredFromPendingReleaseNotes = false;
@@ -1093,12 +1110,14 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
     menuState.kind === "download-progress"
       ? {
           version: downloadingUpdateVersion ?? menuState.version,
+          signedTarget: downloadingSignedTarget,
           releaseNotes: downloadingUpdateReleaseNotes ?? menuState.releaseNotes ?? null,
           channel: downloadingUpdateChannel ?? menuState.channel ?? availableUpdateChannel,
         }
       : downloadCancellationToken && downloadingUpdateVersion
         ? {
             version: downloadingUpdateVersion,
+            signedTarget: downloadingSignedTarget,
             releaseNotes: downloadingUpdateReleaseNotes ?? null,
             channel: downloadingUpdateChannel ?? availableUpdateChannel,
           }
@@ -1145,6 +1164,7 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
     // 修复原因：用户点击“下载更新”后如果下载启动或 staging 很快失败，
     // 旧逻辑会清空 available/downloading 并广播 idle，renderer 入口和弹窗同时消失。
     // 失败并不等同于用户跳过该版本，应退回“发现更新”状态，让用户能看到并重试下载。
+    availableSignedTarget = failedDownload.signedTarget;
     availableUpdateReleaseNotes = failedDownload.releaseNotes;
     availableUpdateChannel = failedDownload.channel;
     setAutoUpdaterMenuState(
@@ -1197,24 +1217,17 @@ async function isSkippedUpdateVersion(
 }
 
 async function shouldAutoDownloadAndInstallUpdates(
-  settingService: SettingServiceLike | undefined,
+  _settingService: SettingServiceLike | undefined,
 ): Promise<boolean> {
-  if (!settingService) {
-    return false;
-  }
-
-  try {
-    return (await settingService.get()).autoDownloadAndInstallUpdates === true;
-  } catch (error) {
-    logger.warn("[auto-update] read auto download preference failed:", error);
-    return false;
-  }
+  // 首期只允许用户明确下载和安装，既有偏好不能开启无人确认的安装。
+  return false;
 }
 
 export async function skipAvailableUpdateVersion(
   version: string,
   settingService: SettingServiceLike | undefined,
 ): Promise<void> {
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor) return;
   if (activeForceAutoUpdateListener) {
     logger.info(`[auto-update] ignore skip version=${version}: force update active`);
     return;
@@ -1301,18 +1314,19 @@ async function clearSkippedUpdateVersionForManualCheck(
   }
 }
 
-function publishDownloadedUpdate(info: UpdateDownloadedInfoLike): void {
-  readyUpdateVersion = info.version;
+function publishDownloadedUpdate(info: UpdateDownloadedInfoLike, target: SignedUpdateTarget): void {
+  readySignedTarget = target;
+  readyUpdateVersion = target.version;
   readyUpdateRestoredFromPendingReleaseNotes = false;
   readyUpdateChannel = downloadingUpdateChannel ?? availableUpdateChannel;
   readyUpdateReleaseNotes = toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
   logger.info(
-    `[auto-update] downloaded: ${info.version}, ${process.platform === "win32" ? "waiting for explicit install" : "ready to install on quit or explicit install"}`,
+    `[auto-update] downloaded and verified: ${info.version}, waiting for explicit install`,
   );
-  setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
-  notifyForceAutoUpdate({ kind: "ready", version: info.version });
+  setAutoUpdaterMenuState(buildUpdateDownloadedState(target.version));
+  notifyForceAutoUpdate({ kind: "ready", version: target.version });
   if (!activeForceAutoUpdateListener) {
     recheckAfterDownload?.("download-finished");
   }
@@ -1346,6 +1360,8 @@ function publishDownloadedUpdate(info: UpdateDownloadedInfoLike): void {
 }
 
 export function downloadAvailableUpdate(reason = "renderer") {
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor || !signedUpdatePolicy)
+    return;
   if (isUpdateTargetLocked()) return;
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
@@ -1372,6 +1388,15 @@ export function downloadAvailableUpdate(reason = "renderer") {
     return;
   }
 
+  if (!availableSignedTarget || availableSignedTarget.version !== menuState.version) {
+    handleAutoUpdateFailure(
+      new Error("MiloCode update has no verified release target; check for updates again"),
+      "download admission failed",
+    );
+    return;
+  }
+  const signedTarget = availableSignedTarget;
+  downloadingSignedTarget = signedTarget;
   downloadingUpdateVersion = menuState.version;
   downloadingUpdateReleaseNotes = menuState.releaseNotes ?? availableUpdateReleaseNotes;
   downloadingUpdateChannel = menuState.channel ?? availableUpdateChannel;
@@ -1389,18 +1414,34 @@ export function downloadAvailableUpdate(reason = "renderer") {
   pendingDownloadedUpdate = null;
   autoUpdater
     .downloadUpdate(cancellationToken)
-    .then(() => {
-      if (downloadCancellationToken !== cancellationToken) return;
+    .then(async () => {
+      if (downloadCancellationToken !== cancellationToken || cancellationToken.cancelled) return;
       const downloaded = pendingDownloadedUpdate;
+      if (downloaded?.token !== cancellationToken || isUpdateTargetLocked()) return;
+      const downloadedTarget = readSignedUpdateTarget(downloaded.info);
+      if (
+        downloadedTarget.version !== signedTarget.version ||
+        downloadedTarget.envelope !== signedTarget.envelope
+      ) {
+        throw new Error("MiloCode downloaded release differs from the accepted update");
+      }
+      const installerPath = getWindowsInstallerPath();
+      await verifySignedInstaller(signedTarget, installerPath);
+      if (
+        downloadCancellationToken !== cancellationToken ||
+        cancellationToken.cancelled ||
+        isUpdateTargetLocked()
+      )
+        return;
+      if (
+        downloadingSignedTarget !== signedTarget ||
+        downloadingUpdateVersion !== signedTarget.version
+      ) {
+        throw new Error("MiloCode download target changed during verification");
+      }
       pendingDownloadedUpdate = null;
       downloadCancellationToken = null;
-      if (
-        downloaded?.token === cancellationToken &&
-        !cancellationToken.cancelled &&
-        !isUpdateTargetLocked()
-      ) {
-        publishDownloadedUpdate(downloaded.info);
-      }
+      publishDownloadedUpdate(downloaded.info, signedTarget);
     })
     .catch((error) => {
       if (isCancelledDownload(cancellationToken, error)) {
@@ -1421,6 +1462,7 @@ export function downloadAvailableUpdate(reason = "renderer") {
 }
 
 export function cancelDownloadingUpdate(reason = "renderer") {
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor) return;
   if (activeForceAutoUpdateListener) {
     logger.info(`[auto-update] skip ${reason} cancel download: force update active`);
     return;
@@ -1432,6 +1474,7 @@ export function cancelDownloadingUpdate(reason = "renderer") {
   }
 
   const version = downloadingUpdateVersion;
+  const signedTarget = downloadingSignedTarget;
   const releaseNotes = downloadingUpdateReleaseNotes;
   const channel = downloadingUpdateChannel ?? availableUpdateChannel;
   const cancellationToken = downloadCancellationToken;
@@ -1444,6 +1487,7 @@ export function cancelDownloadingUpdate(reason = "renderer") {
   // 取消下载不是跳过版本，只回退到发现更新状态，保留同一份 manifest 信息让用户可以稍后重试。
   clearDownloadingUpdateState();
   if (version) {
+    availableSignedTarget = signedTarget;
     availableUpdateReleaseNotes = releaseNotes;
     availableUpdateChannel = channel;
     setAutoUpdaterMenuState(buildUpdateAvailableState(version, releaseNotes, channel));
@@ -1494,24 +1538,11 @@ export async function hydratePendingPostUpdateReleaseNotes(settingService: Setti
     );
   }
 
-  if (
-    pendingPostUpdateReleaseNotes &&
-    isPendingReleaseNotesForFutureVersion(pendingPostUpdateReleaseNotes)
-  ) {
-    // 用户下载完成但尚未安装时重启应用，electron-updater 的内存 ready 状态会丢失，
-    // 但本地 pending 包和版本说明仍在。这里用“pending 版本高于当前版本”恢复待安装状态，
-    // 避免已有缓存时仍提示“下载更新”，点击后又被 dev staging 错误打回 idle。
-    readyUpdateVersion = pendingPostUpdateReleaseNotes.version;
-    readyUpdateReleaseNotes = pendingPostUpdateReleaseNotes;
-    readyUpdateRestoredFromPendingReleaseNotes = true;
-    setAutoUpdaterMenuState(buildUpdateDownloadedState(readyUpdateVersion));
-    logger.info(
-      `[auto-update] restored ready update from pending release notes version=${readyUpdateVersion}`,
-    );
-  }
+  // 仅保留版本说明。缓存、签名与原生安装上下文须由本进程重新检查并下载建立。
 }
 
 export function syncReadyUpdateToWindow(win: BrowserWindow) {
+  if (macNativeUpdaterSelected) return;
   if (!readyUpdateVersion || win.isDestroyed()) {
     return;
   }
@@ -1530,60 +1561,11 @@ export function getAutoUpdaterState(): UpdateStatePayload {
 }
 
 export function refreshAutoUpdaterReleaseChannel(
-  receivePreviewUpdates: boolean,
-  reason = "settings receivePreviewUpdates changed",
+  _receivePreviewUpdates: boolean,
+  _reason = "settings receivePreviewUpdates changed",
 ) {
-  if (quitAndInstallState !== "idle") return;
-  const nextChannel: ElectronReleaseChannel = receivePreviewUpdates ? "preview" : "stable";
-
-  if (!canUseAutoUpdaterInCurrentRuntime()) {
-    logger.info(`[auto-update] skip ${reason}: not packaged`);
-    return;
-  }
-
-  if (menuState.kind === "download-progress" || menuState.kind === "update-downloaded") {
-    logger.info(`[auto-update] skip ${reason}: state=${menuState.kind} channel=${nextChannel}`);
-    return;
-  }
-
-  if (checkForUpdatesInFlight) {
-    // 用户可能在启动检查尚未完成时切换 preview 开关。
-    // 不能立刻改 availableUpdateChannel，否则旧请求返回时会把旧通道的版本标成新通道；
-    // 这里只记录待刷新通道，等当前 check 收口后再重新请求 manifest。
-    pendingManifestReleaseChannelRefresh = nextChannel;
-    logger.info(
-      `[auto-update] defer ${reason}: check already in flight, next channel=${nextChannel}`,
-    );
-    return;
-  }
-
-  const currentChannel = getAutoUpdaterReleaseChannelForCurrentState();
-  if (currentChannel === nextChannel) {
-    logger.info(`[auto-update] skip ${reason}: channel unchanged (${nextChannel})`);
-    return;
-  }
-
-  logger.info(
-    `[auto-update] ${reason}: refresh manifest channel ${currentChannel} -> ${nextChannel}`,
-  );
-  availableUpdateChannel = nextChannel;
-  clearAvailableUpdateState();
-  setAutoUpdaterMenuState({ kind: "checking", enabled: false });
-  const checkId = beginAutoUpdateCheck();
-  autoUpdater
-    .checkForUpdates()
-    .catch((err) => {
-      if (isUpdateTargetLocked()) return;
-      logger.error(`[auto-update] ${reason} check failed:`, err);
-      setAutoUpdaterMenuState(
-        readyUpdateVersion
-          ? buildUpdateDownloadedState(readyUpdateVersion)
-          : { kind: "idle", enabled: true },
-      );
-    })
-    .finally(() => {
-      finishAutoUpdateCheck(reason, checkId);
-    });
+  // MiloCode 仅发布 stable，账户配置不能变更发布通道或信任来源。
+  availableUpdateChannel = "stable";
 }
 
 export function syncAutoUpdaterStateToWindow(win: BrowserWindow) {
@@ -1642,28 +1624,57 @@ export async function acknowledgePostUpdateReleaseNotes(
 }
 
 export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Promise<void> {
-  if (options.enabled === false) {
-    autoUpdaterDisabledForProductFlavor = true;
-    if (autoUpdatePollTimer) {
-      clearInterval(autoUpdatePollTimer);
-      autoUpdatePollTimer = null;
+  miloCodeMacUpdater?.dispose();
+  miloCodeMacUpdater = null;
+  macNativeUpdaterSelected = process.platform === "darwin";
+  if (autoUpdatePollTimer) clearInterval(autoUpdatePollTimer);
+  autoUpdatePollTimer = null;
+  autoUpdatePollIntervalMs = null;
+  signedUpdatePolicy = null;
+  recheckAfterDownload = null;
+  autoUpdaterDisabledForProductFlavor = true;
+  if (options.locale) menuLocale = options.locale;
+  onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
+  confirmUpdateInstall = options.confirmInstall;
+  autoUpdaterSettingService = options.settingService;
+  clearAvailableUpdateState();
+  clearDownloadingUpdateState();
+  clearReadyUpdateState();
+  setAutoUpdaterMenuState({ kind: "idle", enabled: false });
+  if (options.enabled === false || !canUseAutoUpdaterInCurrentRuntime()) {
+    logger.info("[auto-update] MiloCode updater disabled in this runtime");
+    return;
+  }
+
+  if (macNativeUpdaterSelected) {
+    try {
+      miloCodeMacUpdater = createMiloCodeMacUpdater({
+        onState: setAutoUpdaterMenuState,
+        confirmInstall: options.confirmInstall ?? (() => false),
+        onBeforeInstall: async () => {
+          quitAndInstallState = "preparing";
+          await onBeforeQuitAndInstall?.();
+          quitAndInstallState = "installing";
+        },
+        onInstallFailure: recoverFromFailedUpdateInstall,
+      });
+      autoUpdaterDisabledForProductFlavor = false;
+      setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+      logger.info("[auto-update] MiloCode native macOS updater initialized");
+    } catch (error) {
+      logger.error("[auto-update] MiloCode native updater unavailable:", error);
+      setAutoUpdaterMenuState({ kind: "idle", enabled: false });
     }
-    logger.info("[auto-update] disabled for this desktop product flavor");
+    return;
+  }
+
+  try {
+    applyMiloCodeSignedUpdateProvider();
+  } catch (error) {
+    logger.error("[auto-update] MiloCode updater unavailable; no fallback feed:", error);
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
-  if (!canUseAutoUpdaterInCurrentRuntime()) return;
-
-  onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
-  if (options.locale) {
-    menuLocale = options.locale;
-  }
-  autoUpdaterSettingService = options.settingService;
-
-  if (autoUpdatePollTimer) {
-    clearInterval(autoUpdatePollTimer);
-    autoUpdatePollTimer = null;
-  }
   checkForUpdatesInFlight = false;
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
@@ -1671,30 +1682,41 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   pendingManifestReleaseChannelRefresh = null;
   devAutoUpdateVersionOverride = null;
   availableUpdateChannel = "stable";
-  clearAvailableUpdateState();
-  clearDownloadingUpdateState();
   applyDevAutoUpdateRuntimeOverrides();
-
-  logger.info(`[auto-update] initializing, current version: ${getCurrentAppVersionForUpdate()}`);
-
-  // 已下载旧版本后，feed 继续推进到更高版本时，主进程必须先比较远端版本和 ready 版本，
-  // 再决定是否下载。若继续让 electron-updater 自动下载，它只会按当前 app 版本判断，
-  // 导致 `3.1.2` 已 ready `3.1.3` 时每次轮询都可能重复下载 `3.1.3`。
   autoUpdater.autoDownload = false;
-  // Bugfix: Windows/NSIS 在窗口关闭后会异步启动安装；如果用户紧接着关机，安装器可能被系统中断，
-  // 留下半更新状态并导致下次启动失败。macOS/Linux 也先关掉退出即装，只在 ready 包仍等于当前目标时
-  // 由 before-quit 主动安装，避免目标已经升高后退出装上旧包。
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.disableWebInstaller = true;
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.logger = logger;
   if (autoUpdater instanceof pkg.NsisUpdater) {
-    // 保留包内 publisherName 来激活 NSIS hook，但不把旧 DN 当作未来换证的准入条件。
-    autoUpdater.verifyUpdateCodeSignature = (_publisherNames, filePath) =>
-      verifyWindowsAuthenticodeSignature(filePath);
+    // NSIS 首次下载时先验证临时整包；无 publisherName 或缓存命中可能跳过此 hook，
+    // 因而 Main 仍会在下载后与安装前独立重验，不能把 hook 当作唯一准入。
+    autoUpdater.verifyUpdateCodeSignature = async (_publisherNames, filePath) => {
+      const target = downloadingSignedTarget;
+      const policy = signedUpdatePolicy;
+      if (!target || !policy) return "MiloCode download has no signed release context";
+      try {
+        await verifyMiloCodeUpdateArtifact(filePath, target.envelope, policy, {
+          expectedVersion: target.version,
+        });
+        if (downloadingSignedTarget !== target) {
+          throw new Error("MiloCode signed target changed during NSIS verification");
+        }
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : "MiloCode release verification failed";
+      }
+    };
   }
-  applyManifestUpdateProvider(options);
+  setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+  logger.info(
+    `[auto-update] MiloCode stable updater initialized version=${getCurrentAppVersionForUpdate()}`,
+  );
 
   const triggerCheckForUpdates = (reason: string) => {
-    if (quitAndInstallState !== "idle") return;
+    if (quitAndInstallState !== "idle" || downloadCancellationToken) return;
     if (checkForUpdatesInFlight) {
       logger.info(`[auto-update] skip ${reason}: check already in flight`);
       return;
@@ -1760,6 +1782,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     }
 
     void settleAutoUpdateCheckResult("update available", async () => {
+      const signedTarget = readSignedUpdateTarget(info);
       if (!shouldDownloadAvailableUpdate(info.version)) {
         const readyVersion = readyUpdateVersion ?? info.version;
         logger.info(
@@ -1786,6 +1809,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         return;
       }
 
+      availableSignedTarget = signedTarget;
       availableUpdateReleaseNotes = toPostUpdateReleaseNotesPayload(info);
       if (readyUpdateRestoredFromPendingReleaseNotes) {
         // pendingPostUpdateReleaseNotes 只能证明“曾经下载完成并持久化了版本说明”，
@@ -1902,7 +1926,8 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       }
       return;
     }
-    publishDownloadedUpdate(info);
+    // 只有受用户发起的下载事务完成并验签后才能发布 ready。
+    logger.warn(`[auto-update] ignore unbound downloaded event version=${info.version}`);
   });
 
   autoUpdater.on("error", (err, detail: unknown) => {
@@ -1949,20 +1974,15 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
 
   triggerCheckForUpdates("startup");
   ensureAutoUpdatePollInterval();
-  app.on("before-quit", (event) => {
-    if (
-      process.platform === "win32" ||
-      quitAndInstallState !== "idle" ||
-      !isReadyUpdateCurrentTarget()
-    ) {
-      return;
-    }
-    event.preventDefault();
-    void quitAndInstallUpdate();
-  });
 }
 
 function ensureAutoUpdatePollInterval() {
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor || !signedUpdatePolicy) {
+    if (autoUpdatePollTimer) clearInterval(autoUpdatePollTimer);
+    autoUpdatePollTimer = null;
+    autoUpdatePollIntervalMs = null;
+    return;
+  }
   if (menuState.kind === "download-progress") {
     if (autoUpdatePollTimer) {
       clearInterval(autoUpdatePollTimer);
@@ -1987,127 +2007,27 @@ function ensureAutoUpdatePollInterval() {
 
 export function requestForceAutoUpdate(
   onStateChange: (state: ForceAutoUpdateState) => void,
-  reason = "force-update",
+  _reason = "force-update",
   _minimumVersion?: string,
 ) {
-  const dispose = () => {
-    if (activeForceAutoUpdateListener === onStateChange) {
-      activeForceAutoUpdateListener = null;
-    }
-  };
-
-  activeForceAutoUpdateListener = onStateChange;
-  forceAutoUpdateLastLoggedProgressBucket = null;
-  logger.info(`[force-update] 自动升级开始 reason=${reason}`);
-  if (quitAndInstallState !== "idle") {
-    onStateChange({ kind: "installing" });
-    return dispose;
-  }
-  onStateChange({ kind: "checking" });
-
-  if (!canUseAutoUpdaterInCurrentRuntime()) {
-    const message = "not packaged";
-    logger.info(`[force-update] 自动升级跳过：${message}`);
-    onStateChange({ kind: "dev-skipped", message });
-    return dispose;
-  }
-
-  if (menuState.kind === "update-downloaded") {
-    onStateChange({ kind: "installing" });
-    void quitAndInstallUpdate();
-    return dispose;
-  }
-
-  if (menuState.kind === "update-available") {
-    downloadAvailableUpdate("force-update");
-    return dispose;
-  }
-
-  if (menuState.kind === "download-progress") {
-    onStateChange({
-      kind: "downloading",
-      ...("version" in menuState && menuState.version ? { version: menuState.version } : {}),
-      progress: menuState.progress,
-    });
-    return dispose;
-  }
-
-  if (checkForUpdatesInFlight) {
-    logger.info(`[force-update] 自动升级复用进行中的更新检查`);
-    return dispose;
-  }
-
-  const checkId = beginAutoUpdateCheck();
-  setAutoUpdaterMenuState({ kind: "checking", enabled: false });
-  autoUpdater
-    .checkForUpdates()
-    .catch((err) => {
-      if (isUpdateTargetLocked()) return;
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error(`[auto-update] ${reason} check failed:`, err);
-      setAutoUpdaterMenuState(
-        readyUpdateVersion
-          ? buildUpdateDownloadedState(readyUpdateVersion)
-          : { kind: "idle", enabled: true },
-      );
-      onStateChange({ kind: "error", message });
-    })
-    .finally(() => {
-      finishAutoUpdateCheck(reason, checkId);
-    });
-
-  return () => {
-    if (activeForceAutoUpdateListener === onStateChange) {
-      activeForceAutoUpdateListener = null;
-    }
-  };
+  onStateChange({
+    kind: "error",
+    message: "MiloCode updates require explicit user confirmation.",
+  });
+  return () => {};
 }
 
-export function requestAutoUpdateCheckWithoutWindow(reason = "force-update") {
-  if (quitAndInstallState !== "idle") return;
-  logger.info(`[auto-update] ${reason}: user requested update check without renderer window`);
-
-  if (!canUseAutoUpdaterInCurrentRuntime()) {
-    logger.info(`[auto-update] skip ${reason}: not packaged`);
+export function requestAutoUpdateCheckWithoutWindow(reason = "manual-update") {
+  if (openMiloCodeMacUpdateStatus()) return;
+  if (macNativeUpdaterSelected || autoUpdaterDisabledForProductFlavor || !signedUpdatePolicy)
     return;
-  }
-
-  if (menuState.kind === "update-downloaded") {
-    void quitAndInstallUpdate();
-    return;
-  }
-  if (menuState.kind === "update-available") {
-    downloadAvailableUpdate(reason);
-    return;
-  }
-  if (menuState.kind === "download-progress") {
-    logger.info(`[auto-update] skip ${reason}: update already ${menuState.kind}`);
-    return;
-  }
-  if (checkForUpdatesInFlight) {
-    logger.info(`[auto-update] skip ${reason}: check already in flight`);
-    return;
-  }
-
-  const checkId = beginAutoUpdateCheck();
-  setAutoUpdaterMenuState({ kind: "checking", enabled: false });
-  autoUpdater
-    .checkForUpdates()
-    .catch((err) => {
-      if (isUpdateTargetLocked()) return;
-      logger.error(`[auto-update] ${reason} check failed:`, err);
-      setAutoUpdaterMenuState(
-        readyUpdateVersion
-          ? buildUpdateDownloadedState(readyUpdateVersion)
-          : { kind: "idle", enabled: true },
-      );
-    })
-    .finally(() => {
-      finishAutoUpdateCheck(reason, checkId);
-    });
+  // 保留无主窗口的菜单入口，但只检查，不替用户下载或安装。
+  recheckAfterDownload?.(reason);
 }
 
 export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
+  if (openMiloCodeMacUpdateStatus()) return;
+  if (macNativeUpdaterSelected) return;
   if (quitAndInstallState !== "idle") return;
   logger.info("[auto-update] user clicked Check for Updates");
 
@@ -2131,7 +2051,7 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     return;
   }
 
-  if (autoUpdaterDisabledForProductFlavor) {
+  if (autoUpdaterDisabledForProductFlavor || !signedUpdatePolicy) {
     // 入口本应已按产品身份隐藏；这里是最后一道闸，不让未初始化的 updater 实例向占位 feed 发请求。
     logger.info("[auto-update] skip manual check: updater disabled for this product flavor");
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
@@ -2146,11 +2066,11 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     void quitAndInstallUpdate();
     return;
   }
-  if (menuState.kind === "download-progress") {
+  if (menuState.kind === "download-progress" || downloadCancellationToken) {
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "already-downloading",
       version: downloadingUpdateVersion ?? readyUpdateVersion ?? "",
-      progress: menuState.progress,
+      progress: menuState.kind === "download-progress" ? menuState.progress : "0",
     } satisfies UpdateCheckResultPayload);
     return;
   }

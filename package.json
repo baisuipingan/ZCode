@@ -1,7 +1,8 @@
 {
   "name": "zcode",
-  "version": "3.17.2",
+  "version": "3.17.3",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev:web": "concurrently -k -n server,web -c blue,green \"pnpm --filter @zcode/server dev\" \"pnpm --filter @zcode/web dev\"",
@@ -79,7 +80,9 @@
     "provider:regression": "pnpm --filter @zcode/bootstrap... build && tsx apps/zcode-cli/tools/provider-regression/src/cli.ts",
     "test:engineering": "vitest run --project engineering",
     "test:engineering:affected": "node scripts/run-affected-engineering-tests.mjs",
-    "test:engineering-tools": "node --test scripts/test/affected-engineering-test-cli.test.mjs scripts/test/pre-push-worktree.test.mjs scripts/test/retired-app-unit-evidence.test.mjs scripts/test/e2e-remote-targets-check.test.mjs",
+    "test:engineering-tools": "node --test scripts/test/affected-engineering-test-cli.test.mjs scripts/test/pre-push-worktree.test.mjs scripts/test/retired-app-unit-evidence.test.mjs scripts/test/e2e-remote-targets-check.test.mjs scripts/milocode-release.test.mjs scripts/milocode-release-admin.test.mjs packages/desktop/scripts/milocode-release-trust.test.mjs packages/desktop/scripts/milocode-shutdown-admission-smoke.mjs",
+    "test:milocode-updates": "node --test scripts/milocode-release.test.mjs scripts/milocode-release-admin.test.mjs packages/desktop/scripts/milocode-release-trust.test.mjs packages/desktop/scripts/milocode-shutdown-admission-smoke.mjs",
+    "test:milocode-update-ui": "node --test packages/ui/test/browser/manual-review/pending/milocode-manual-update.test.mjs",
     "check:e2e-remote-targets": "node scripts/check-e2e-remote-targets.mjs"
   },
   "dependencies": {
@@ -136,6 +139,5 @@
       "@aiden0z/pptx-renderer@1.2.4": "patches/@aiden0z__pptx-renderer@1.2.4.patch",
       "@extend-ai/react-xlsx@0.16.0": "patches/@extend-ai__react-xlsx@0.16.0.patch"
     }
-  },
-  "license": "Apache-2.0"
+  }
 }

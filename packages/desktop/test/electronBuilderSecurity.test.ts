@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -214,6 +215,49 @@ it.each(["darwin", "linux"])("%s 保留现有 fuse 配置", async (platform) => 
   const { default: config } = await import("../electron-builder.config.js");
 
   expect(config.electronFuses).toBeUndefined();
+});
+
+function configureMiloCodeTestUpdates(platform: string) {
+  const { publicKey } = generateKeyPairSync("ed25519");
+  vi.stubEnv("ZCODE_TARGET_OS", platform);
+  vi.stubEnv("ZCODE_TARGET_ARCH", platform === "darwin" ? "arm64" : "x64");
+  vi.stubEnv("MILOCODE_UPDATE_BASE_URL", "https://download.example.com/milocode/");
+  vi.stubEnv(
+    "MILOCODE_UPDATE_PUBLIC_KEYS_JSON",
+    JSON.stringify({
+      test: publicKey.export({ type: "spki", format: "pem" }),
+    }),
+  );
+  vi.stubEnv("MILOCODE_SPARKLE_PUBLIC_KEY", Buffer.alloc(32, 1).toString("base64"));
+}
+
+it("MiloCode Windows 的免费发布签名策略不再要求付费发行证书", async () => {
+  configureMiloCodeTestUpdates("win32");
+  const { default: config } = await import("../electron-builder.config.js");
+  expect(config.win?.verifyUpdateCodeSignature).toBe(false);
+  expect(config.win?.target).toEqual(["nsis"]);
+});
+
+it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async () => {
+  configureMiloCodeTestUpdates("darwin");
+  const { default: config } = await import("../electron-builder.config.js");
+  expect(config.mac?.extendInfo).toMatchObject({
+    SUFeedURL: "https://download.example.com/milocode/stable/darwin-arm64/appcast.xml",
+    MiloCodeReleaseBaseURL: "https://download.example.com/milocode/",
+    SURequireSignedFeed: true,
+    SUSignedFeedFailureExpirationInterval: 0,
+    SUVerifyUpdateBeforeExtraction: true,
+    SUEnableAutomaticChecks: false,
+    SUAllowsAutomaticUpdates: false,
+    SUAutomaticallyUpdate: false,
+  });
+  expect(config.mac?.extraFrameworks).toHaveLength(1);
+  expect(config.extraResources).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ to: "milocode-update/milocode_sparkle.node" }),
+      expect.objectContaining({ to: "milocode-update/SPARKLE-LICENSE" }),
+    ]),
+  );
 });
 
 it("DMG contents 不得引用镜像内生成的隐藏文件", async () => {

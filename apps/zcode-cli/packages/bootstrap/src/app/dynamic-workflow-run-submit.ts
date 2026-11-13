@@ -8,6 +8,7 @@
 // {@link DynamicWorkflowRunEntryContext} 从 service 显式递进来，本文件不持有任何自己的状态。
 
 import { randomUUID } from "node:crypto";
+import type { RuntimeBillingScope } from "@zcode/core";
 import type {
   DynamicWorkflowRunAmendRequest,
   DynamicWorkflowRunAmendResult,
@@ -82,7 +83,9 @@ export async function submitDynamicWorkflowRun(
   ctx: DynamicWorkflowRunEntryContext,
   request: DynamicWorkflowRunSubmitRequest,
 ): Promise<DynamicWorkflowRunSubmitResult> {
+  const billingScope = structuredClone(ctx.deps.captureBillingScope?.(request.trace) ?? {});
   const runId = startNewRun(ctx, {
+    billingScope,
     runId: mintRunId(),
     scriptText: request.scriptText,
     cwd: request.cwd,
@@ -124,6 +127,8 @@ export async function amendDynamicWorkflowRun(
   ctx: DynamicWorkflowRunEntryContext,
   request: DynamicWorkflowRunAmendRequest,
 ): Promise<DynamicWorkflowRunAmendResult> {
+  // 修订会等待前驱与转录静默；等待期间父会话可能已换轮，必须在此刻冻结。
+  const billingScope = structuredClone(ctx.deps.captureBillingScope?.(request.trace) ?? {});
   const { deps, runs } = ctx;
   const preflight = preflightAmendImport(deps.journal, request.predecessorRunId);
   if (!preflight.ok) {
@@ -204,6 +209,7 @@ export async function amendDynamicWorkflowRun(
       : undefined;
 
   startNewRun(ctx, {
+    billingScope,
     runId,
     scriptText: request.scriptText,
     cwd: request.cwd,
@@ -240,6 +246,7 @@ export async function amendDynamicWorkflowRun(
 }
 
 interface StartNewRunInput {
+  billingScope: RuntimeBillingScope;
   runId: string;
   scriptText: string;
   cwd: string;
@@ -342,6 +349,7 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
   // launch 之前存在——retune 可能在 submit 返回后的任意一个微任务里到达。
   const control = createWorkflowRunControl();
   const entry: RunRegistryEntry = {
+    billingScope: input.billingScope,
     controller,
     control,
     startedAt: new Date(),
@@ -381,6 +389,7 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
     runId,
     entry,
     launchDynamicWorkflowRun({
+      billingScope: input.billingScope,
       caps,
       compiled,
       cwd: input.cwd,
@@ -434,6 +443,9 @@ export async function resumeDynamicWorkflowRun(
   // in-process 在飞的同 runId：journal 状态是 running，本就不可恢复；单列 reason 是
   // 因为它与「不可恢复的终态」对调用方是不同的动作（等它结算 vs 放弃）。
   const live = runs.get(runId);
+  // resume 是同一个 run 的续跑，不是新账户的 admission；GUI 可能正撞上另一轮 B。
+  // 冷恢复无可信归属时保持无绑定，既有 managed guard 会拒绝，不从当前账号补签。
+  const billingScope = structuredClone(live?.billingScope ?? {});
   if (live !== undefined && live.terminal === undefined) {
     return { ok: false, reason: "already_running" };
   }
@@ -508,6 +520,7 @@ export async function resumeDynamicWorkflowRun(
   // 引擎，留着它会让 retune 对一个死引擎说话。
   const control = createWorkflowRunControl();
   const entry: RunRegistryEntry = {
+    billingScope,
     controller,
     control,
     startedAt: new Date(),
@@ -544,6 +557,7 @@ export async function resumeDynamicWorkflowRun(
     runId,
     entry,
     launchDynamicWorkflowRun({
+      billingScope,
       holeTypeOf: (siteId) => entry.holes?.find((hole) => hole.siteId === siteId)?.type,
       // caps 沿用 journal 记录：spentTokens 是对着这套 caps 累计的，
       // 重算等于悄悄挪门柱。

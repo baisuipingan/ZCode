@@ -15,6 +15,7 @@ import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 // 本文件在旧目录，import v4 executor 合法；v4 目录禁止反向 import 本目录任何模块。
 import {
   isConversationRealUserTurnStarter,
+  sameManagedBillingBinding,
   parseRemoteWorkspaceIdentity,
   type ZCodeSessionContextUsage,
   type ZCodeWorkspaceRef,
@@ -31,7 +32,10 @@ import {
   type V4ConversationFileRewindPreviewResult,
   type SessionSummary,
 } from "@zcode/shared/zcode-protocol-v4";
-import { V4CommandExecutor } from "../zcode-protocol-v4/commands/executor.js";
+import {
+  V4CommandExecutor,
+  type V4CommandAdmission,
+} from "../zcode-protocol-v4/commands/executor.js";
 import { V4QueuePromotionLeaseUnavailableError } from "../zcode-protocol-v4/commands/handlers/queue.js";
 import { V4CapabilityUnsupportedError } from "../zcode-protocol-v4/commands/handlers/interaction-background.js";
 import {
@@ -117,7 +121,8 @@ import type {
   ZCodeProtocolAgentServerContext,
   ZCodeProtocolSessionRecord,
 } from "./server-types.js";
-import { createProtocolLogger } from "./server-types.js";
+import { createProtocolLogger, createProtocolRootTraceContext } from "./server-types.js";
+import { createProviderRuntimeHeadersPort } from "./provider-runtime-headers.js";
 
 function normalizeStoredTitleSource(
   source: string | undefined,
@@ -253,6 +258,7 @@ async function previewConversationFileRewind(
 }
 
 interface InputCommandForAdmission {
+  billingBinding?: ConversationInputIntent["billingBinding"];
   inputOrigin?: "desktop" | "mobile";
   conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
   botGroupSource?: ConversationInputIntent["botGroupSource"];
@@ -374,6 +380,7 @@ export function resolveInputCommandForAdmission(
   const originalSourceCommandId =
     canonical.intent.provenance?.sourceCommandId ?? canonical.intent.sourceCommandId;
   return {
+    ...(canonical.intent.billingBinding ? { billingBinding: canonical.intent.billingBinding } : {}),
     kind: canonical.intent.kind,
     ...(canonical.intent.genUiContext !== undefined
       ? { genUiContext: canonical.intent.genUiContext }
@@ -422,10 +429,79 @@ export function isConversationInputAdmissionCommand(type: CommandEnvelope["type"
   );
 }
 
+/** 只从受信进程策略冻结扣费身份；不接受 Renderer 字段，也不重写原 queue intent。 */
+async function bindManagedAdmission(
+  context: ZCodeProtocolAgentServerContext,
+  admission: V4CommandAdmission | undefined,
+  sessionId?: string | null,
+  checkFreshness = false,
+): Promise<void> {
+  let policy = context.deps.readProviderRegistrySnapshot?.()?.account.managedPolicy;
+  if (!policy) return;
+  if (checkFreshness && policy.state === "ready" && sessionId) {
+    const originalIdentity = {
+      origin: policy.billingBinding.origin,
+      accountRef: policy.billingBinding.accountRef,
+      accountEpoch: policy.billingBinding.accountEpoch,
+    };
+    const live = context.sessions.get(sessionId);
+    const stored = live
+      ? undefined
+      : await context.deps.sessionStore?.getSession(sessionId as SessionId);
+    const workspace =
+      live?.workspace ??
+      (stored?.directory
+        ? resolveWorkspaceRefFromId(String(stored.workspaceID ?? stored.directory))
+        : undefined);
+    if (!workspace) throw new Error("Managed admission workspace is unavailable");
+    const selection = policy.defaultSelection ?? {
+      providerId: policy.providerId,
+      modelId: policy.models[0]?.modelId ?? "unavailable",
+    };
+    // 元数据只路由既有反向请求，不是实际选型。Host admission 分支不读取模型或下发 Key。
+    // 冷恢复只读目录归属，不为同步模型启动第二个 runtime；失败早于 ledger 与 queue remove。
+    await createProviderRuntimeHeadersPort(context, workspace).refreshBeforeModelRequest({
+      sessionId: sessionId as SessionId,
+      providerId: selection.providerId,
+      modelId: selection.modelId,
+      managedAccess: { credentialRef: policy.credentialRef, billingBinding: policy.billingBinding },
+      phase: "admission",
+      reason: "model-request",
+      traceContext: live?.traceContext ?? createProtocolRootTraceContext(sessionId as SessionId),
+    });
+    policy = context.deps.readProviderRegistrySnapshot?.()?.account.managedPolicy;
+    if (
+      policy?.state === "ready" &&
+      (originalIdentity.origin !== policy.billingBinding.origin ||
+        originalIdentity.accountRef !== policy.billingBinding.accountRef ||
+        originalIdentity.accountEpoch !== policy.billingBinding.accountEpoch)
+    ) {
+      // 原因：新输入可采用同账号同步后的 scope，但不能在异步 ACK 期间被迁移给新账号。
+      // 已接受输入的完整 binding 在下方继续校验，不因这条身份比较而放宽。
+      throw Object.assign(new Error("Account changed during input admission"), {
+        reasonCode: "managed_billing_binding_changed",
+      });
+    }
+  }
+  if (policy?.state !== "ready" || !admission)
+    throw Object.assign(new Error("Managed inference is not ready"), {
+      reasonCode: "brand_inference_not_ready",
+    });
+  if (
+    admission.billingBinding &&
+    !sameManagedBillingBinding(admission.billingBinding, policy.billingBinding)
+  ) {
+    throw Object.assign(new Error("Input belongs to an earlier account authorization"), {
+      reasonCode: "managed_billing_binding_changed",
+    });
+  }
+  if (!admission.billingBinding) admission.billingBinding = structuredClone(policy.billingBinding);
+}
+
 function buildForkInitialInput(
   envelope: CommandEnvelope,
   childSessionId: string,
-  admission: { admissionSeq: number; admittedAt: number; queueItemId: string },
+  admission: V4CommandAdmission,
   input: InputCommandForAdmission,
 ): ForkCommitBundle["initialInput"] {
   const requested = input.requestedDelivery ?? "startNow";
@@ -434,6 +510,7 @@ function buildForkInitialInput(
     input.admittedDelivery ??
     (fallbackReasonCode ? "queue" : requested === "auto" ? "startNow" : requested);
   const intent = conversationInputIntentSchema.parse({
+    ...(admission.billingBinding ? { billingBinding: admission.billingBinding } : {}),
     sourceCommandId: envelope.commandId,
     queueItemId: admission.queueItemId,
     clientId: envelope.clientId || "cli",
@@ -745,6 +822,12 @@ export function createConversationV4Gateway(
     // 暂停队列恢复后，旧项只存在于投影而不在新 activeTurn 内存中；普通文本也必须
     // 和 typed /goal、/compact 一样走完整投影的队首，避免新输入越过旧暂停项。
     try {
+      const admission: V4CommandAdmission = {
+        admissionSeq: 0,
+        admittedAt: Date.now(),
+        queueItemId: head.queueItemId,
+      };
+      await bindManagedAdmission(context, admission, record.app.sessionId, true);
       await nativeExecutor.execute(
         {
           baseRevision: 0,
@@ -755,7 +838,7 @@ export function createConversationV4Gateway(
           sessionId: record.app.sessionId,
           type: "sendQueuedNow",
         },
-        undefined,
+        admission,
         { autoDrainPromotion: true },
       );
     } catch (error) {
@@ -832,7 +915,7 @@ export function createConversationV4Gateway(
       return gateway.waitForProjectionEventCommit(sessionId, eventId, options);
     },
     admitInputCommand: async (envelope, sessionId, admission) => {
-      if (!context.deps.sessionStore?.saveSessionInput) return null;
+      await bindManagedAdmission(context, admission, sessionId, true);
       const input = resolveInputCommandForAdmission(
         envelope,
         sessionId,
@@ -840,6 +923,17 @@ export function createConversationV4Gateway(
           context.v4Gateway?.resolveRowActionTarget(sourceSessionId, target, action) ?? null,
       );
       if (!input) return null;
+      if (
+        admission.billingBinding &&
+        (envelope.type === "retryTurn" || envelope.type === "editUserQuery") &&
+        !sameManagedBillingBinding(admission.billingBinding, input.billingBinding)
+      ) {
+        // 重试/编辑复用原 intent，不能在新账户下先接受再破坏旧分支。
+        throw Object.assign(new Error("Historical input requires a new execution authorization"), {
+          reasonCode: "managed_billing_binding_changed",
+        });
+      }
+      if (!context.deps.sessionStore?.saveSessionInput) return null;
       const kind = input.kind;
       const record = context.sessions.get(sessionId);
       if (record?.persistence === "deferred") {
@@ -877,6 +971,7 @@ export function createConversationV4Gateway(
             ? "startNow"
             : requestedDelivery);
       const conversationInputIntent = conversationInputIntentSchema.parse({
+        ...(admission.billingBinding ? { billingBinding: admission.billingBinding } : {}),
         ...(input.inputOrigin ? { inputOrigin: input.inputOrigin } : {}),
         ...(input.conversationQuotes ? { conversationQuotes: input.conversationQuotes } : {}),
         ...(input.botGroupSource ? { botGroupSource: input.botGroupSource } : {}),
@@ -912,6 +1007,9 @@ export function createConversationV4Gateway(
         payload: {
           text: conversationInputIntent.text,
           intent: {
+            ...(conversationInputIntent.billingBinding
+              ? { billingBinding: conversationInputIntent.billingBinding }
+              : {}),
             sourceCommandId: conversationInputIntent.sourceCommandId,
             queueItemId: conversationInputIntent.queueItemId,
             clientId: conversationInputIntent.clientId,
@@ -1813,10 +1911,27 @@ export function createConversationV4Gateway(
         : null,
     // 回落面已清零（20 命令全部原生）：supports 未命中（未知命令类型）→
     // notImplemented → ACK failed fault.command.notImplemented。
-    executeCommand: (envelope, admission) =>
-      nativeExecutor.supports(envelope.type)
+    executeCommand: async (envelope, admission) => {
+      if (
+        isConversationInputAdmissionCommand(envelope.type) ||
+        [
+          "createSession",
+          "resumeGoal",
+          "sendQueuedNow",
+          "forkAssistant",
+          "createSelectionSideSession",
+        ].includes(envelope.type)
+      )
+        await bindManagedAdmission(
+          context,
+          admission,
+          envelope.sessionId,
+          !isConversationInputAdmissionCommand(envelope.type) && envelope.type !== "createSession",
+        );
+      return nativeExecutor.supports(envelope.type)
         ? nativeExecutor.execute(envelope, admission)
-        : Promise.reject(new V4CommandNotImplementedError(envelope.type)),
+        : Promise.reject(new V4CommandNotImplementedError(envelope.type));
+    },
     admitCommandInput: async (envelope, admission) => {
       // 仅隐藏 composer 不能阻止旧 child 标签页续聊。类型准入必须早于
       // ledger/输入历史写入；detached child 没有 record 时只查元数据，不激活第二个 runtime。

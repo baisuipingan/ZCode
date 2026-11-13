@@ -8,7 +8,7 @@ import type {
   CommandPayloadMap,
   CommandResult,
 } from "@zcode/shared/zcode-protocol-v4";
-import { isHighspeedProviderId } from "@zcode/shared";
+import { isHighspeedProviderId, sameManagedBillingBinding } from "@zcode/shared";
 import { createModelExecutionContext } from "../../../session-execution/index.js";
 import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
 import { inputIntentMetadataFromQueueItem } from "../input-intent.js";
@@ -24,7 +24,7 @@ import {
 import { resolveSessionFallbackModelSelection } from "../input-admission.js";
 import { preemptActiveTurnAndWait } from "./session-flow.js";
 import { V4CommandNoopError } from "../../v4-gateway.js";
-import { commandExecutionContextOf } from "../executor.js";
+import { commandExecutionContextOf, commandAdmissionOf } from "../executor.js";
 export { V4SessionIdleTimeoutError } from "./session-flow.js";
 
 /** sendQueuedNow 在投影里查不到该项原文（已被 drain/删除或 id 无效）→ 拒绝。 */
@@ -187,6 +187,13 @@ async function sendQueuedNow(
     const queueItem = host.getQueueItem?.(record.app.sessionId, payload.queueItemId) ?? null;
     if (queueItem === null) {
       throw new V4QueueItemTextUnavailableError(payload.queueItemId);
+    }
+    const currentBinding = commandAdmissionOf(envelope).billingBinding;
+    if (currentBinding && !sameManagedBillingBinding(currentBinding, queueItem.billingBinding)) {
+      // 原因：提升是调度操作，不是把 A 已接受输入改为 B 的新扣费授权。
+      throw Object.assign(new Error("Queued input belongs to an earlier account authorization"), {
+        reasonCode: "managed_billing_binding_changed",
+      });
     }
     const acquirePromotionLease = (mode: "after-current" | "idle-only"): void => {
       const leaseResult = record.app.runtime.acquireForegroundPromotionLease({

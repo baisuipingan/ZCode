@@ -80,12 +80,12 @@ export function applyProtocolPresentationSurface(
 export function applyProtocolProviderRegistry(
   options: Omit<ZCodeAppOptions, "providerRegistry">,
   providerRegistry: ZCodeAppOptions["providerRegistry"],
-  configuredDefaultModelSelection?: ModelSelection,
+  configuredDefaultModelSelection?: ModelSelection | null,
 ): ZCodeAppOptions {
   return {
     ...options,
     providerRegistry,
-    ...(configuredDefaultModelSelection ? { configuredDefaultModelSelection } : {}),
+    ...(configuredDefaultModelSelection !== undefined ? { configuredDefaultModelSelection } : {}),
   };
 }
 
@@ -307,7 +307,7 @@ export async function runZCodeProtocolAgent(
           ...applyProtocolProviderRegistry(
             applyProtocolPresentationSurface(appOptions, presentationSurface),
             activeProviderRegistryRuntime.runtime.registryService,
-            activeProviderRegistryRuntime.configuredDefaultModelSelection,
+            activeProviderRegistryRuntime.getConfiguredDefaultModelSelection(),
           ),
           // 只读同进程已应用快照；不为子任务另发 Host RPC，也不在 ModelFactory 偷换模型。
           resolveEffectiveModelSelection: (selection) => {
@@ -352,6 +352,7 @@ export async function runZCodeProtocolAgent(
           getProjectMemoryRoot(protocolCliStorageRoot, workspacePath, workspaceIdentity),
       }),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
+      readProviderRegistrySnapshot: activeProviderRegistryRuntime.readProviderRegistrySnapshot,
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
       },

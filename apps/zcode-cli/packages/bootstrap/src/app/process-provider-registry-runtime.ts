@@ -9,6 +9,8 @@ import {
   isBuiltinModelProviderId,
   resolveRuntimeZCodeEndpointOrigin,
   ZCODE_VERSION,
+  managedProviderPolicySchema,
+  type ManagedProviderPolicy,
 } from "@zcode/shared";
 import { dirname, join } from "node:path";
 import {
@@ -157,6 +159,7 @@ export async function startProcessProviderRegistryRuntime(
       const configuredDefaultModelSelection = await modelSelectionConfigRepository.read();
       return Object.freeze({
         accountSource: standaloneAccount ?? accountSource,
+        readProviderRegistrySnapshot: () => runtime.registryService.getSnapshot(),
         async syncAccountProviderConfig(next: AccountProviderConfigSnapshot): Promise<boolean> {
           if (standaloneAccount)
             throw new Error("Standalone Account 由本进程管理，不接收 Host 覆盖");
@@ -183,6 +186,14 @@ export async function startProcessProviderRegistryRuntime(
         snapshot,
         modelSelectionConfigRepository,
         configuredDefaultModelSelection,
+        getConfiguredDefaultModelSelection() {
+          const policy = runtime.registryService.getSnapshot()?.account.managedPolicy;
+          return policy
+            ? policy.state === "ready"
+              ? policy.defaultSelection
+              : undefined
+            : configuredDefaultModelSelection;
+        },
       });
     } catch (error) {
       disposeCredentialSubscription?.();
@@ -204,6 +215,7 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
   readonly basedOnZCodeBuiltinRevision: string;
   readonly providers: unknown;
   readonly states?: AccountProviderStates;
+  readonly managedPolicy?: ManagedProviderPolicy;
 }): AccountProviderConfigSnapshot {
   const revision = input.revision.trim();
   if (!revision) throw new Error("Account Config revision 不能为空");
@@ -227,6 +239,9 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
     revision,
     basedOnZCodeBuiltinRevision,
     providers,
+    ...(input.managedPolicy
+      ? { managedPolicy: managedProviderPolicySchema.parse(input.managedPolicy) }
+      : {}),
     // 与 Overlay 属于同一快照；不能只更新 revision 却丢掉当前连接事实。
     ...(input.states ? { states: input.states } : {}),
   });

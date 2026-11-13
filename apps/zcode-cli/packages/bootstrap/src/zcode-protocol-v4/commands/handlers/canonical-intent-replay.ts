@@ -58,6 +58,7 @@ function buildCanonicalIntent(
       admittedDelivery: editTarget.intent.admittedDelivery,
       fallbackReasonCode: editTarget.intent.fallbackReasonCode,
       modelSelection: editTarget.intent.modelSelection,
+      billingBinding: editTarget.intent.billingBinding,
       mode: editTarget.intent.mode,
       planEnabled: editTarget.intent.planEnabled,
       attachmentRefs,

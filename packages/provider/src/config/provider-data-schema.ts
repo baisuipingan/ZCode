@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sparseShape } from "@zcode/shared/config-schema";
+import { managedProviderAccessSchema } from "@zcode/shared/model-selection";
 
 export const providerApiTypeDataSchema = z.enum([
   "anthropic-messages",
@@ -57,10 +58,12 @@ export const zhipuAccountAccessDataSchema = z
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
+  managedProviderAccessSchema.extend({ type: z.literal("brand-managed") }),
 ]);
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  managedProviderAccessSchema.extend({ type: z.literal("brand-managed") }),
 ]);
 
 export const completeProviderApiDataSchema = z

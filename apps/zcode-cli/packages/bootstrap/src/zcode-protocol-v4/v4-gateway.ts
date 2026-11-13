@@ -324,7 +324,7 @@ export interface V4GatewayHost {
   /** 输入命令执行前先落 durable admission；返回同一份完整 intent 供 inbox pin。 */
   admitCommandInput?(
     envelope: CommandEnvelope,
-    admission: { admissionSeq: number; admittedAt: number; queueItemId: string },
+    admission: import("./commands/executor.js").V4CommandAdmission,
   ): Promise<ConversationInputIntent | null>;
   cancelCommandInput?(
     envelope: CommandEnvelope,

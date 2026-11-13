@@ -10,6 +10,7 @@ import type {
 import { commandAdmissionOf } from "./executor.js";
 
 export interface CanonicalCommandIntent {
+  billingBinding?: TurnInputIntentMetadata["billingBinding"];
   inputOrigin?: "desktop" | "mobile";
   conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
   botGroupSource?: TurnInputIntentMetadata["botGroupSource"];
@@ -56,6 +57,9 @@ export function inputIntentMetadata(
       ? (envelope.payload as CommandPayloadMap["sendText"]).highspeedMeta
       : undefined;
   return {
+    ...(admission.billingBinding
+      ? { billingBinding: structuredClone(admission.billingBinding) }
+      : {}),
     ...((envelope.inputOrigin ?? options.inputOrigin)
       ? { inputOrigin: envelope.inputOrigin ?? options.inputOrigin }
       : {}),
@@ -105,6 +109,9 @@ export function inputIntentMetadataFromCanonical(
   const originalSourceCommandId =
     canonical.provenance?.sourceCommandId ?? canonical.sourceCommandId;
   return {
+    ...(canonical.billingBinding
+      ? { billingBinding: structuredClone(canonical.billingBinding) }
+      : {}),
     ...((envelope.inputOrigin ?? canonical.inputOrigin)
       ? { inputOrigin: envelope.inputOrigin ?? canonical.inputOrigin }
       : {}),
@@ -145,6 +152,7 @@ export function inputIntentMetadataFromQueueItem(
   canonicalText: string,
 ): TurnInputIntentMetadata {
   return {
+    ...(item.billingBinding ? { billingBinding: structuredClone(item.billingBinding) } : {}),
     ...(item.inputOrigin ? { inputOrigin: item.inputOrigin } : {}),
     ...(item.conversationQuotes ? { conversationQuotes: item.conversationQuotes } : {}),
     ...(item.botGroupSource ? { botGroupSource: item.botGroupSource } : {}),

@@ -13,6 +13,52 @@ z-code 桌面端后续不再通过 ZCode app-server 兼容多 agent，而是只�
 
 ## 状态归属
 
+### 品牌托管模型（W3）
+
+受信本机 Host 仍通过 `provider/updateAccountConfig` 更新唯一 Account source；可选
+`managedPolicy` 是独立于 Personal/官方账号的非秘密策略。存在该策略时，Registry 只发布
+策略中的单个 Responses 模型；blocked 策略发布空集合，不借用 Personal、环境变量或官方配置。
+更新回执的 `appliedRevision` / `managedReady` 只在 Registry 已实际应用同一 revision、且完整默认
+selection 校验成功后返回，`receivedRevision` 本身不构成执行授权。
+
+```text
+Host bootstrap → Account source → Registry 原子应用 → applied 回执
+                     ↓
+CLI 唯一 admission → 冻结非秘密 billingBinding → queue/turn/child/auxiliary
+                     ↓
+每物理 attempt → Host 私有 resolver 核对原账户/epoch/policy → 本次动态 Key
+```
+
+`brand-managed` Access 只保存 credentialRef 和 billingBinding，不包含 Key/JWT。
+反向 runtime headers 的 managedAccess 与原 accountAccess 互斥；缺 resolver、缺 binding、过期策略
+在发送前失败。Key 只用于本次请求，清除静态认证头，禁止环境 Key 回退。Host 是秘密 owner，
+CLI 是已接受输入与运行 owner，不新增 Host 队列。绑定包含 origin/accountRef/accountEpoch/policyRevision，
+由已应用的受信策略注入；队列与 transcript 只保存该非秘密事实。换号不能重写已接受 intent，
+旧 binding 请求失败；历史缺 binding 可只读恢复，不能自动执行。主任务、标题、压缩、记忆、
+验证、子代理均继承其所属执行的原绑定，后台工作不得读取后来的账号作为扣费身份。
+策略切换为 blocked、换号、epoch 或策略 revision 变化时，配置入口先关闭旧 resident runtime
+的执行准入并沿既有 session lifecycle 关闭链取消前台、工具、子代理和 sidecar，再确认新 Registry。
+持久输入与队列原事实保留；冷恢复只读，旧队列提升及 retry/edit 在写入或 reserve 前核对原绑定，
+缺失或不匹配即拒绝，不给旧输入换上新账户/策略授权。相同策略重交不打断当前运行。
+
+绑定作为既有 JSON intent 的加法可选字段，由 CLI codec/hydration 处理；不由 Host 直写 SQLite。
+独立 CLI 和未接入品牌策略的远端保持原行为。验收使用 CLI schema/Registry/adapter/mock gateway
+回归，不触发真实付费推理。
+
+### 托管请求的私有结果反馈
+
+`interaction/managedInferenceOutcome` 是当前本机 CLI 到本机 Host 的严格校验实时通知。
+它只包含 workspace/session 路由和 `turn_settled` 的原 billingBinding，或结构化鉴权/余额
+拒绝候选的原 managedAccess 与实际使用 Key 的 SHA-256 指纹。原始 Key、错误响应与正文
+不进入通知；该通知不转发 Renderer，不入 transcript、持久事件或手机 replay/gap repair。
+子代理复用既有父会话路由，保留原扣费归属；Host 拒绝旧进程、远端 workspace 和过期绑定。
+
+401 + `INVALID_API_KEY`/`API_KEY_DISABLED` 只能作为候选，不能证明拒绝来自本机网关；
+Host 匹配完整 scope、epoch、credentialRef 和当前指纹后合并一次强制 bootstrap，由控制面
+决定是否换材料或阻断；不清登录、不恢复已停用 Key、不自动重放付费请求。403 +
+`INSUFFICIENT_BALANCE` 仅提示权威余额/用量刷新。每个原 turn 的 finally 对成功、失败和取消
+发结算信号，不能逐 token 或 tool step 刷新钱包；在途旧读取必须尾随一次事件后的新读取。
+
 插件 `plugins/referenceCatalog` 与 `plugins/referenceCatalogWithCategory` 沿现有 listing join
 按完整 plugin ID 投影可选 `description` / `descriptionI18n`。字段仅用于 Picker 按语言展示描述，
 不进入 Session 冻结的能力身份或 model-only reminder；旧 Host 缺字段时 UI 留空。
@@ -123,3 +169,31 @@ Host 在 V4 command envelope 注入可选 `inputOrigin=desktop|mobile`，CLI 复
 保存到各类新输入（首发、goal、edit/retry）；queue promotion 保留原 intent 来源。TurnStarted
 遥测仅投影来源和无正文的运行配置，不传输入正文。历史 hydration/recovery 不生成遥测。
 执行服务消费 live fact 收口远控 completion/step；手机 replayable 和桌面 continuous 的交付不变。
+
+# 2026-11-12：受管目录在线更新与执行边界
+
+Host 是账户、推理材料与目录同步的唯一所有者；CLI Registry 仅应用完整非秘密策略。目录 `revision` 是应用确认版本，`billingBinding.policyRevision` 从本版起表示稳定授权作用域（账号/epoch、凭据、网关与计费组），不随模型新增、展示名、默认值而变化。旧持久输入的原 binding 仍不改写。
+
+- 同一登录账号下，目录及分组、凭据引用、网关变更只替换 Registry，不关闭 resident runtime、不取消已打开的流或本地工具。旧 Model 的下一 attempt 仍按原授权作用域/凭据引用核验，不得借新配置自动续授权；显式新轮使用新 Registry。退出、换号、账号 epoch 变化及 blocked 沿用取消屏障。
+- 每次真实模型 attempt 的既有反向鉴权携带 `modelConfigRevision`，由共享 `managedModelConfigFingerprint` 对执行配置规范化得到；Host 将其与最新该模型配置比较。名称及推荐默认思考档位不属于指纹；实际允许档位、映射与能力仍属于指纹。已删除或参数不兼容模型在下一次请求被拒绝，其他模型继续工作；不撤回已打开请求，不自动换模型。
+- `defaultSelection: null` 表示管理员默认暂不可用。ready 可有零个模型，此时应用成功但没有可执行选择；不得回落原官方供应商或按目录顺序猜默认。
+- 在实际新需求/继续/队列提升准入前，CLI 通过现有 `interaction/requestProviderRuntimeHeaders` 发送 `phase: admission`。Host 按唯一 freshness 协调器等待同步及 CLI 应用确认；失败发生在账本接受或队列移除以前。普通 attempt 缺省 `phase: attempt`，只查当前授权，不因控制面暂时故障额外终止长任务。
+- 新输入在 freshness 前只捕获登录账号身份（origin/accountRef/epoch），不提前冻结 scope。ACK 后先复核该身份未变，再首次冻结最新 billingBinding；同账号恰逢切组可以当次按新 scope 准入。已有 admission、队列、重试和历史输入仍比较完整原 binding，不因刷新迁移；换号或 epoch 变化在写账本前拒绝。
+- 自动队列提升与显式发送共用准入路径、原 reservation/lease/CommandInbox；不建立第二 accepted queue。失败保留原队列项、原输入和成果。
+
+```mermaid
+sequenceDiagram
+  participant Q as CLI CommandInbox/queue
+  participant H as Host 目录 owner
+  participant R as CLI Registry
+  Q->>H: existing reverse RPC (phase admission)
+  H->>H: same-account single-flight freshness
+  H->>R: provider/updateAccountConfig
+  R-->>H: appliedRevision + managedReady
+  H-->>Q: headersApplied
+  Q->>Q: bind original authorization; accept/start
+  Q->>H: attempt auth + modelConfigRevision
+  H-->>Q: current model credential or explicit rejection
+```
+
+回归：目录新增/展示名/默认不关闭 runtime；同账号切组/换凭据/网关不打断真实 HTTP SSE，但旧授权下一 attempt 被拦；推荐默认档位变化不影响既有合法档位；默认失效不替换用户选择；空目录 ACK；移除模型/改变能力的旧 Model 下一 attempt 被拦；账号变化仍取消；队列 freshness 失败原位保留，恢复后仅执行一次。

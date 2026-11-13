@@ -9,6 +9,70 @@ import {
 } from "@zcode/contracts";
 import { deriveChildClientPorts } from "../src/runtime/helpers/child-client-ports.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "../src/runtime/methods/model-runtime-headers.js";
+import { createTestAgentRuntime } from "./test-agent-runtime.js";
+import { createTestSessionEventStore } from "./test-event-store.js";
+import { createTestModelFactory } from "./test-runtime-model.js";
+
+describe("原turn的私有结算反馈", () => {
+  it.each(["success", "failure", "cancelled"] as const)(
+    "%s只在原finally反馈一次冻结归属",
+    async (terminal) => {
+      const billingBinding = {
+        origin: "https://example.invalid",
+        accountRef: "A",
+        accountEpoch: 1,
+        policyRevision: "scope",
+      };
+      const expected = structuredClone(billingBinding);
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const outcomes: unknown[] = [];
+      const runtime = createTestAgentRuntime(
+        createSessionId(`managed-settlement-${terminal}`),
+        { workingDirectory: "/workspace" },
+        {
+          eventStore: createTestSessionEventStore(),
+          providerRuntimeHeadersPort: {
+            billingBinding,
+            refreshBeforeModelRequest: async () => ({ headersApplied: true }),
+            reportManagedOutcome(input) {
+              outcomes.push(input.outcome);
+            },
+          },
+          modelFactory: createTestModelFactory({
+            async generateText(request, observation) {
+              expect(observation.invocationContext?.reportManagedOutcome).toBeTypeOf("function");
+              started.resolve();
+              await finish.promise;
+              if (terminal === "failure") throw new Error("synthetic model failure");
+              if (terminal === "cancelled")
+                throw request.abortSignal?.reason ?? new Error("cancelled");
+              return {
+                text: "done",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+            },
+          }),
+        },
+      );
+      try {
+        const turn = runtime.executeTurn("test managed settlement");
+        await started.promise;
+        expect(outcomes).toEqual([]);
+        billingBinding.accountRef = "B";
+        if (terminal === "cancelled")
+          runtime.stopActiveForegroundExecution({ reason: "user_stop" });
+        finish.resolve();
+        await turn.catch(() => undefined);
+        expect(outcomes).toEqual([{ kind: "turn_settled", billingBinding: expected }]);
+      } finally {
+        finish.resolve();
+        await runtime.close();
+      }
+    },
+  );
+});
 
 /**
  * docs/zcode-protocol-model-backed-control-requests.md「反向请求的会话路由与终止保证」契约 2。
@@ -21,6 +85,115 @@ describe("deriveChildClientPorts", () => {
   const rootSessionId = createSessionId("root-session");
   const childSessionId = createSessionId("child-session");
   const grandchildSessionId = createSessionId("grandchild-session");
+
+  it("显式普通 API scope 不向父端口的 managed B 借绑定", () => {
+    const parentBinding = {
+      origin: "https://example.invalid",
+      accountRef: "B",
+      accountEpoch: 1,
+      policyRevision: "scope",
+    };
+    const child = deriveChildClientPorts(
+      {
+        providerRuntimeHeadersPort: {
+          billingBinding: parentBinding,
+          refreshBeforeModelRequest: async () => ({ headersApplied: true }),
+        },
+      },
+      {
+        agentId: "ordinary",
+        agentType: "workflow",
+        childSessionId,
+        parentSessionId: rootSessionId,
+        billingBinding: undefined,
+      },
+    );
+    expect(child.providerRuntimeHeadersPort?.billingBinding).toBeUndefined();
+  });
+
+  it("延迟子任务传入原 A scope 后，不读取父 runtime 此刻的 B", async () => {
+    const original = {
+      origin: "https://example.invalid",
+      accountRef: "A",
+      accountEpoch: 1,
+      policyRevision: "scope",
+    };
+    const current = { ...original, accountRef: "B" };
+    const runtime = createTestAgentRuntime(
+      rootSessionId,
+      { workingDirectory: "/workspace" },
+      {
+        eventStore: createTestSessionEventStore(),
+        providerRuntimeHeadersPort: {
+          billingBinding: current,
+          refreshBeforeModelRequest: async () => ({ headersApplied: true }),
+        },
+      },
+    );
+    try {
+      const scope = { billingBinding: structuredClone(original) };
+      const child = runtime.createChildClientPorts(
+        {
+          agentId: "delayed",
+          agentType: "workflow",
+          childSessionId,
+        },
+        scope,
+      );
+      scope.billingBinding.accountRef = "mutated";
+      expect(child.providerRuntimeHeadersPort?.billingBinding).toEqual(original);
+      expect(
+        runtime.createChildClientPorts(
+          {
+            agentId: "ordinary",
+            agentType: "workflow",
+            childSessionId,
+          },
+          {},
+        ).providerRuntimeHeadersPort?.billingBinding,
+      ).toBeUndefined();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("私有结算反馈逐层路由根会话，保留原billingBinding", () => {
+    const received: unknown[] = [];
+    const billingBinding = {
+      origin: "https://example.invalid",
+      accountRef: "A",
+      accountEpoch: 1,
+      policyRevision: "scope",
+    };
+    const root = {
+      providerRuntimeHeadersPort: {
+        refreshBeforeModelRequest: async () => ({ headersApplied: true }),
+        reportManagedOutcome: (input: unknown) => {
+          received.push(input);
+        },
+      },
+    };
+    const child = deriveChildClientPorts(root, {
+      agentId: "child",
+      agentType: "explore",
+      childSessionId,
+      parentSessionId: rootSessionId,
+      billingBinding,
+    });
+    const grandchild = deriveChildClientPorts(child, {
+      agentId: "grandchild",
+      agentType: "explore",
+      childSessionId: grandchildSessionId,
+      parentSessionId: childSessionId,
+      billingBinding,
+    });
+    const outcome = { kind: "turn_settled" as const, billingBinding };
+    grandchild.providerRuntimeHeadersPort?.reportManagedOutcome?.({
+      outcome,
+      sessionId: grandchildSessionId,
+    });
+    expect(received).toEqual([{ outcome, sessionId: rootSessionId }]);
+  });
 
   it("子会话 PAT 恢复通过 core 原端口携带作用域和指纹，仍路由到根会话", async () => {
     const received: unknown[] = [];
@@ -149,6 +322,25 @@ describe("deriveChildClientPorts", () => {
       headersInput(grandchildSessionId),
     );
     expect(seen).toEqual([rootSessionId, rootSessionId]);
+  });
+
+  it("子代理捕获原运行扣费归属，不跟随父端口随后换号", () => {
+    const billingBinding = {
+      origin: "https://account.example",
+      accountRef: "user:A",
+      accountEpoch: 1,
+      policyRevision: "A",
+    };
+    const parentPort = {
+      billingBinding,
+      refreshBeforeModelRequest: async () => ({ headersApplied: true }),
+    };
+    const child = deriveChildClientPorts(
+      { providerRuntimeHeadersPort: parentPort },
+      { ...originContext, parentSessionId: rootSessionId, billingBinding },
+    );
+    billingBinding.accountRef = "user:B";
+    expect(child.providerRuntimeHeadersPort?.billingBinding?.accountRef).toBe("user:A");
   });
 
   it("父没有端口时不合成空实现（键缺席，不是 undefined 值）", () => {

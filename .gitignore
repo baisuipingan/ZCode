@@ -24,6 +24,8 @@ coverage/
 .env.local
 .env.*.local
 .env
+# 本机发行默认配置只包含受信源和公钥，不随开源仓库替换发行身份。
+/config/private/build-defaults.json
 .VSCodeCounter
 .idea/
 .zed/
@@ -67,6 +69,7 @@ binding.Makefile
 # CUA 权限浮窗吸附用的 Swift 辅助二进制（由 prepare:macos-window-bounds 从
 # packages/desktop/native/macos-window-bounds/main.swift 编出，源码入库、产物不入库）
 packages/desktop/resources/macos-window-bounds/
+packages/desktop/resources/milocode-update/
 # CUA Helper SEA 基座下载缓存（scripts/cua-helper-sea-base.mjs 落盘的官方 Node 22 运行时，纯下载产物）
 /.tmp/
 # R3 服务器部署时写入的实际 commit 标记（harness/remote/deploy-server.sh 产出，随环境变化）

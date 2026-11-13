@@ -417,6 +417,8 @@ import {
 } from "./cuaOperationTurnTracker.js";
 import type { PipSessionEvent } from "@zcode/zcode-cua/pip-session";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
+import type { BrandManagedInferenceHost } from "#src/brand-account/index.js";
+import { zcodeManagedInferenceOutcomeSchema } from "@zcode/shared";
 
 import {
   zcodeMcpUiResourceSubscriptionResultSchema as mcpUiEmptyResultSchema,
@@ -1098,6 +1100,7 @@ interface CreateZCodeAgentServiceBaseOptions extends Omit<
   /** 仅供 MCP 状态探测进程使用，不能把空闲回收传给 chat。 */
   mcpStatusIdleTimeoutMs?: number;
   accountProviderConfigSource?: ProviderSource<AccountProviderConfigSnapshot>;
+  brandManagedInference?: BrandManagedInferenceHost;
   /** Desktop Host 请求 Main 登记 Agent 已授权的精确本地视频路径。 */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
@@ -1724,6 +1727,56 @@ export function createZCodeAgentService(
     pending: PendingProviderRuntimeHeadersRequest,
     workspace: ZCodeAgentWorkspaceTarget,
   ): Promise<void> {
+    if (pending.request.managedAccess || options?.brandManagedInference) {
+      try {
+        if (!pending.request.managedAccess || !options?.brandManagedInference)
+          throw new Error("品牌推理服务尚未连接。");
+        if (pending.request.phase === "admission") {
+          await options.brandManagedInference.ensureFreshForAdmission();
+          // 原因：Host拿到新目录不代表发起本轮工作的CLI已应用，必须等待同一client回执。
+          await ensureAccountProviderConfigSynced({
+            client: pending.client,
+            reason: "managed-admission-refresh",
+            workspace,
+            executionAdmission: true,
+          });
+          await options.brandManagedInference.assertAdmissionIdentity(
+            pending.request.managedAccess,
+          );
+          if (pendingProviderRuntimeHeaders.get(key) !== pending) return;
+          await pending.client.respond(pending.protocolRequestId, {
+            headersApplied: true,
+            requestAuth: {},
+          });
+          return;
+        }
+        const requestAuth = await options.brandManagedInference.resolve({
+          providerId: pending.request.providerId,
+          modelId: pending.request.modelSelection.modelId,
+          managedAccess: pending.request.managedAccess,
+          phase: pending.request.phase,
+          modelConfigRevision: pending.request.modelConfigRevision,
+        });
+        if (pendingProviderRuntimeHeaders.get(key) !== pending) return;
+        await pending.client.respond(pending.protocolRequestId, {
+          headersApplied: true,
+          requestAuth,
+        });
+      } catch (error) {
+        if (pendingProviderRuntimeHeaders.get(key) !== pending) return;
+        await pending.client.respond(pending.protocolRequestId, {
+          headersApplied: false,
+          errorMessage:
+            error instanceof Error && error.name === "BrandAccountError"
+              ? error.message
+              : "Agent模型配置同步或连接暂不可用，请重试。",
+        });
+      } finally {
+        if (pendingProviderRuntimeHeaders.get(key) === pending)
+          pendingProviderRuntimeHeaders.delete(key);
+      }
+      return;
+    }
     let configFailureCode:
       | (typeof zcodeProviderRuntimeHeadersErrorCode)[keyof typeof zcodeProviderRuntimeHeadersErrorCode]
       | undefined;
@@ -1872,10 +1925,34 @@ export function createZCodeAgentService(
     });
   });
 
+  function captureManagedExecutionRevision(): string | undefined {
+    const policy = options?.brandManagedInference?.getPolicy();
+    if (!policy) return undefined;
+    if (policy.state !== "ready")
+      throw Object.assign(new Error("Agent服务尚未连接。"), { code: "brand_inference_not_ready" });
+    return JSON.stringify([policy.billingBinding, policy.credentialRef, policy.baseUrl]);
+  }
+
+  async function assertManagedExecutionRevision(revision: string | undefined): Promise<void> {
+    if (revision === undefined) return;
+    await options?.brandManagedInference?.assertConfigured();
+    const current = options?.brandManagedInference?.getPolicy();
+    // 原因：目录增删/改名不改变扣费归属；异步预处理仍须防止换号或路由凭据变化。
+    if (
+      current?.state !== "ready" ||
+      JSON.stringify([current.billingBinding, current.credentialRef, current.baseUrl]) !== revision
+    ) {
+      throw Object.assign(new Error("Agent服务配置已变化，请重试。"), {
+        code: "brand_inference_not_ready",
+      });
+    }
+  }
+
   async function syncAccountProviderConfigToClient(params: {
     client: ZCodeProtocolClient;
     reason: string;
     refreshRegistry?: boolean;
+    executionAdmission?: boolean;
   }): Promise<void> {
     if (!accountProviderConfigSource) return;
     const previous = accountConfigSyncByClient.get(params.client) ?? Promise.resolve();
@@ -1901,17 +1978,28 @@ export function createZCodeAgentService(
                 ]),
               ),
               states: snapshot.states ?? {},
+              ...(snapshot.managedPolicy ? { managedPolicy: snapshot.managedPolicy } : {}),
             },
             zcodeProviderUpdateAccountConfigResultSchema,
           );
           if (result.receivedRevision !== snapshot.revision) {
             throw new Error("Account Config 接收回执版本与交付版本不一致");
           }
+          if (
+            snapshot.managedPolicy?.state === "ready" &&
+            (result.appliedRevision !== snapshot.revision || result.managedReady !== true)
+          ) {
+            throw Object.assign(new Error("Agent模型配置尚未应用，请重新连接后重试。"), {
+              code: "brand_inference_not_ready",
+            });
+          }
           accountConfigReceivedRevisionByClient.set(params.client, result.receivedRevision);
           logger.info(undefined, "account provider config 已交付到 ZCode agent", {
             providerCount: result.providerCount,
             reason: params.reason,
-            receivedRevision: result.receivedRevision,
+            ...(snapshot.managedPolicy
+              ? { managedPolicyState: snapshot.managedPolicy.state }
+              : { receivedRevision: result.receivedRevision }),
             status: result.status,
           });
         }
@@ -1921,6 +2009,23 @@ export function createZCodeAgentService(
             { reason: params.reason },
             zcodeProviderRefreshRegistryResultSchema,
           );
+        }
+        if (
+          params.executionAdmission &&
+          snapshot.managedPolicy?.state === "ready" &&
+          options?.brandManagedInference
+        ) {
+          await options.brandManagedInference.assertConfigured();
+          const currentPolicy = options.brandManagedInference.getPolicy();
+          // 原因：旧CLI的A回执可能晚于Host切到B/退出；不能把A已应用当作当前授权。
+          if (
+            currentPolicy.state !== "ready" ||
+            currentPolicy.revision !== snapshot.managedPolicy.revision
+          ) {
+            throw Object.assign(new Error("Agent服务配置已变化，请重试。"), {
+              code: "brand_inference_not_ready",
+            });
+          }
         }
       });
     accountConfigSyncByClient.set(params.client, current);
@@ -1938,12 +2043,15 @@ export function createZCodeAgentService(
     reason: string;
     workspace: ZCodeAgentWorkspaceTarget;
     refreshRegistry?: boolean;
+    executionAdmission?: boolean;
   }): Promise<void> {
     await syncAccountProviderConfigToClient({
       client: params.client,
       reason: params.reason,
       refreshRegistry: params.refreshRegistry,
+      executionAdmission: params.executionAdmission,
     });
+    if (params.executionAdmission) await options?.brandManagedInference?.assertConfigured();
   }
 
   async function handleAccountProviderConfigChanged(reason: string): Promise<void> {
@@ -2463,6 +2571,21 @@ export function createZCodeAgentService(
         } | null;
         if (!routed && (data?.sessionId || data?.taskId || data?.topic || data?.workspace)) return;
         const workspace = routed ?? initialWorkspace;
+        if (message.method === zcodeProtocolNotifications.managedInferenceOutcome) {
+          const parsed = zcodeManagedInferenceOutcomeSchema.safeParse(message.params);
+          // 只有当前本机CLI可提交私有反馈；远程/旧进程/同路径不同identity均不能影响本机账号。
+          if (
+            parsed.success &&
+            !parsed.data.workspace.remoteSessionId &&
+            !workspace.remoteSessionId &&
+            !isRemoteWorkspaceIdentity(workspace.workspaceIdentity ?? "") &&
+            resolveWorkspaceKey(parsed.data.workspace) === resolveWorkspaceKey(workspace) &&
+            activeClientsByWorkspaceKey.get(resolveWorkspaceKey(workspace))?.client === client
+          ) {
+            void options?.brandManagedInference?.reportOutcome(parsed.data.outcome).catch(() => {});
+          }
+          return;
+        }
         if (message.method === zcodeProtocolMethods.sessionLifecycleChanged) {
           if (activeClientsByWorkspaceKey.get(resolveWorkspaceKey(workspace))?.client !== client)
             return;
@@ -4446,6 +4569,7 @@ export function createZCodeAgentService(
     },
 
     async createSession(params: ZCodeAgentCreateSessionParams) {
+      const managedRevision = captureManagedExecutionRevision();
       if (options?.prepareSessionCreation) {
         const prepared = await options.prepareSessionCreation({
           ...params,
@@ -4466,6 +4590,7 @@ export function createZCodeAgentService(
         reason: "session_create",
         workspace: params,
         refreshRegistry: true,
+        executionAdmission: true,
       });
       const sessionTraceId = params.sessionTraceId;
       logger.info(sessionTraceId, "开始请求 ZCode Protocol session/create", {
@@ -4482,6 +4607,7 @@ export function createZCodeAgentService(
       // 灰度在 client 就绪时已判定，这里是进程内已解析 promise 的再次 await（不打远端）。
       const dynamicWorkflowFlags = await resolveDynamicWorkflowSessionFlags();
       try {
+        await assertManagedExecutionRevision(managedRevision);
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionCreate,
           buildSessionCreateParams({ ...params, offPeakToolEnabled, ...dynamicWorkflowFlags }),
@@ -4522,6 +4648,7 @@ export function createZCodeAgentService(
         // host/UI 可能已经发送新版 session/create 可选字段，但本地打包、
         // 远端部署或仍存活的旧 app-server 还在使用旧 strict schema。只对已知
         // 可选字段降级重试，避免 thoughtLevel/persistence 版本差阻塞首发创建。
+        await assertManagedExecutionRevision(managedRevision);
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionCreate,
           buildSessionCreateParams(
@@ -4574,6 +4701,7 @@ export function createZCodeAgentService(
     },
 
     async resumeSession(params: ZCodeAgentResumeSessionParams) {
+      const managedRevision = captureManagedExecutionRevision();
       const client = await getClient(params);
       params = {
         ...params,
@@ -4586,6 +4714,7 @@ export function createZCodeAgentService(
         reason: "session_resume",
         workspace: params,
         refreshRegistry: true,
+        executionAdmission: true,
       });
       const cachedTraceId = getSessionTraceId(params);
       const offPeakToolEnabled = isOffPeakToolSupported(params);
@@ -4600,6 +4729,7 @@ export function createZCodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
+        await assertManagedExecutionRevision(managedRevision);
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionResume,
           buildSessionResumeParams({ ...params, offPeakToolEnabled, ...dynamicWorkflowFlags }),
@@ -4636,6 +4766,7 @@ export function createZCodeAgentService(
           workspaceKey: resolveWorkspaceKey(params),
           workspacePath: params.workspacePath,
         });
+        await assertManagedExecutionRevision(managedRevision);
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionResume,
           buildSessionResumeParams(
@@ -5863,6 +5994,7 @@ export function createZCodeAgentService(
     },
 
     async sendPrompt(params: ZCodeAgentSendPromptParams) {
+      const managedRevision = captureManagedExecutionRevision();
       const startedAt = Date.now();
       const client = await getClient(params);
       await ensureAccountProviderConfigSynced({
@@ -5870,6 +6002,7 @@ export function createZCodeAgentService(
         reason: "session_send",
         workspace: params,
         refreshRegistry: true,
+        executionAdmission: true,
       });
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
       const logTraceId = sessionTraceId ?? params.inputId;
@@ -5898,6 +6031,7 @@ export function createZCodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
+        await assertManagedExecutionRevision(managedRevision);
         const result = await client.request(
           zcodeProtocolMethods.sessionSend,
           buildSessionSendParams(protocolParams),
@@ -5923,6 +6057,7 @@ export function createZCodeAgentService(
             workspaceKey: resolveWorkspaceKey(params),
             workspacePath: params.workspacePath,
           });
+          await assertManagedExecutionRevision(managedRevision);
           const result = await client.request(
             zcodeProtocolMethods.sessionSend,
             buildSessionSendParams(protocolParams, new Set(compatFields)),
@@ -6658,6 +6793,14 @@ export function createZCodeAgentService(
     },
 
     async sendConversationCommandV4(params: ZCodeAgentConversationCommandParams) {
+      const managedRevision =
+        requiresProviderRegistryRefresh(params.envelope.type) ||
+        params.envelope.type === "resumeGoal" ||
+        (params.envelope.type === "setAutoDrain" &&
+          (params.envelope.payload as { autoDrain?: boolean }).autoDrain === true) ||
+        params.envelope.type === "resolveInteraction"
+          ? captureManagedExecutionRevision()
+          : undefined;
       const ttft =
         !params.workspaceIdentity?.trim() &&
         !params.remoteSessionId &&
@@ -6736,13 +6879,14 @@ export function createZCodeAgentService(
             ? ("mobile" as const)
             : ("desktop" as const),
       };
-      if (requiresProviderRegistryRefresh(envelope.type)) {
+      if (requiresProviderRegistryRefresh(envelope.type) || managedRevision !== undefined) {
         await measure("host.provider_sync", () =>
           ensureAccountProviderConfigSynced({
             client,
             reason: "v4_command",
             workspace: params,
             refreshRegistry: true,
+            executionAdmission: managedRevision !== undefined,
           }),
         );
       }
@@ -6786,6 +6930,7 @@ export function createZCodeAgentService(
         if (payload.sessionId) rememberClientTarget(client, params, payload.sessionId);
       }
       // ACK 往返可与执行重叠，诊断单列，不能与六个 TTFT 主阶段相加。
+      await assertManagedExecutionRevision(managedRevision);
       const ack: CommandAck = await measure("host.cli_ack", () =>
         client.request(V4_METHODS.command, envelope, commandAckSchema),
       );

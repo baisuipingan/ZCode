@@ -39,7 +39,7 @@ export function selectAppShutdownPolicy(
   platform: NodeJS.Platform,
 ): AppShutdownPolicySelection {
   // 更新安装的优先级只增不减：已创建的普通退出短 timer 不做破坏性重建，更新仍在
-  // 现有屏障后 fail-open 进入资源扫描和安装器，保证“可能残留”不会升级成“无法更新”。
+  // 现有屏障后由更新准入确认真实 Host exit；普通退出的超时收口不能授权安装。
   const kind =
     activeKind === "update-install" || requestedKind === "update-install"
       ? "update-install"

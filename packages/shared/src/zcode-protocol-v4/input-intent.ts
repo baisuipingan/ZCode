@@ -7,7 +7,7 @@ import { z } from "zod";
 import { timestampSchema } from "./core.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 import { highspeedMessageMetaSchema } from "../highspeed.js";
-import { modelSelectionSchema } from "../model-selection.js";
+import { modelSelectionSchema, managedBillingBindingSchema } from "../model-selection.js";
 import { submissionModeSchema } from "./submission.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
 
@@ -77,6 +77,7 @@ export const conversationInputIntentSchema = z
     attachments: z.array(attachmentRefSchema).default([]),
     // optional 只服务旧 snapshot hydration；新 admission 必须填入完整 Submission。
     modelSelection: modelSelectionSchema.optional(),
+    billingBinding: managedBillingBindingSchema.optional(),
     mode: submissionModeSchema.optional(),
     planEnabled: z.boolean().optional(),
     genUiContext: genUiModelContextSchema.optional(),

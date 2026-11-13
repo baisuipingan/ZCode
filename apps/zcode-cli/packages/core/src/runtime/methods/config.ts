@@ -22,6 +22,7 @@ import {
   deriveChildClientPorts,
   type ChildClientPortsContext,
   type ClientFacingPorts,
+  type RuntimeBillingScope,
 } from "../helpers/child-client-ports.js";
 import type { AgentRuntimeConfig, ActiveTurnInfo } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -237,6 +238,7 @@ export async function notifyExternalChildSessionEvent(
 export function createChildClientPorts(
   this: AgentRuntimeInternal,
   context: ChildClientPortsContext,
+  billingScope?: RuntimeBillingScope,
 ): ClientFacingPorts {
   return deriveChildClientPorts(
     {
@@ -245,8 +247,22 @@ export function createChildClientPorts(
         ? {}
         : { providerRuntimeHeadersPort: this.providerRuntimeHeadersPort }),
     },
-    { ...context, parentSessionId: this.sessionId },
+    {
+      ...context,
+      parentSessionId: this.sessionId,
+      billingBinding: (billingScope ?? captureBillingScope.call(this))?.billingBinding,
+    },
   );
+}
+
+/** 同步克隆执行归属，供异步 workflow owner 在第一个 await 前冻结。 */
+export function captureBillingScope(this: AgentRuntimeInternal): RuntimeBillingScope | undefined {
+  const billingBinding =
+    this.activeForegroundExecution?.billingBinding ??
+    this.providerRuntimeHeadersPort?.billingBinding;
+  return this.activeForegroundExecution || billingBinding
+    ? { billingBinding: billingBinding ? structuredClone(billingBinding) : undefined }
+    : undefined;
 }
 
 export function getContextBuilder(this: AgentRuntimeInternal): ContextBuilder {

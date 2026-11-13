@@ -26,7 +26,12 @@ import { notifyHoleReached } from "./dynamic-workflow-run-hole-notification.js";
 export async function recordDynamicWorkflowRunProgress(
   this: AgentRuntimeInternal,
   input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
+  billingScope?: { billingBinding?: import("@zcode/shared").ManagedBillingBinding },
 ): Promise<void> {
+  // run service 在提交前冻结归属；进度可早于 tracker 注册任务，不能在此借当前账户补签。
+  const billingBinding = billingScope?.billingBinding
+    ? structuredClone(billingScope.billingBinding)
+    : undefined;
   const { traceContext: provided, ...payload } = input;
   const traceContext = provided ?? this.rootTraceContext;
   await this.appendEvent(
@@ -40,11 +45,11 @@ export async function recordDynamicWorkflowRunProgress(
   // 开集变了（提问 / 作答 / 到达留白 / 补全）：这个 run 的「欠着决定」提醒重新计数。先于下面的通知，
   // 这样会话正闲着时空闲钟先归零，再被通知唤起的那一轮停掉。
   noteWorkflowReminderRunEvent(this, payload);
-  notifyEscalationRaised.call(this, payload, traceContext);
-  notifyRunStalled.call(this, payload, traceContext);
+  notifyEscalationRaised.call(this, payload, traceContext, billingBinding);
+  notifyRunStalled.call(this, payload, traceContext, billingBinding);
   // 留白（dynamic-workflow-run-hole-notification.ts）：要读一次快照补齐类型 / 草稿 / 前后阶段，所以是
   // 三条里唯一异步的一条；事件已经落库，等它只是等通知入队。
-  await notifyHoleReached.call(this, payload, traceContext);
+  await notifyHoleReached.call(this, payload, traceContext, billingBinding);
 }
 
 /** run 级停滞的事件种类（引擎的 `RunEvent.type`）。 */
@@ -59,6 +64,7 @@ function notifyRunStalled(
   this: AgentRuntimeInternal,
   payload: DynamicWorkflowRunProgressPayload,
   traceContext: TraceContext,
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding,
 ): void {
   if (payload.eventType !== RUN_STALLED_EVENT_TYPE) return;
   const sinceMs = payload.payload.sinceMs;
@@ -79,6 +85,7 @@ function notifyRunStalled(
       ? Math.floor(capValue)
       : undefined;
   this.enqueueBackgroundTaskNotification({
+    ...(billingBinding ? { billingBinding } : {}),
     originMeta: {
       backgroundSource: "workflow",
       title: runLabel,
@@ -124,6 +131,7 @@ function notifyEscalationRaised(
   this: AgentRuntimeInternal,
   payload: DynamicWorkflowRunProgressPayload,
   traceContext: TraceContext,
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding,
 ): void {
   if (payload.eventType !== ESCALATION_RAISED_EVENT_TYPE) return;
 
@@ -151,6 +159,7 @@ function notifyEscalationRaised(
   const askedAt = payload.payload.askedAt;
 
   this.enqueueBackgroundTaskNotification({
+    ...(billingBinding ? { billingBinding } : {}),
     originMeta: {
       backgroundSource: "workflow",
       title: runLabel,

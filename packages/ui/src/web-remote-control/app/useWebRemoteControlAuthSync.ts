@@ -10,24 +10,25 @@ export function useWebRemoteControlAuthSync(
   oauth: WebRemoteControlAuthEvents,
   userId: string | undefined,
   restoring: boolean,
+  enabled = true,
 ): void {
   const initialStateSynced = useRef(false);
   useEffect(() => {
     initialStateSynced.current = false;
-    if (!platform.notifyWebRemoteControlAuthStateChanged) return;
+    if (!enabled || !platform.notifyWebRemoteControlAuthStateChanged) return;
     const subscription = oauth.onDidChangeSession((state) => {
       // 实时凭据事实优先于迟到的初始 UI 投影；无需在 renderer 保存第二份认证状态。
       initialStateSynced.current = true;
       platform.notifyWebRemoteControlAuthStateChanged?.({ state });
     });
     return () => subscription.dispose();
-  }, [platform, oauth]);
+  }, [enabled, platform, oauth]);
 
   useEffect(() => {
-    if (restoring || initialStateSynced.current) return;
+    if (!enabled || restoring || initialStateSynced.current) return;
     initialStateSynced.current = true;
     platform.notifyWebRemoteControlAuthStateChanged?.({
       state: userId ? "signed-in" : "signed-out",
     });
-  }, [platform, oauth, userId, restoring]);
+  }, [enabled, platform, oauth, userId, restoring]);
 }

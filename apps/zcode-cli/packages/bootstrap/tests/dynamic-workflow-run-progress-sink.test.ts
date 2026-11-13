@@ -4,7 +4,11 @@
 // 这个文件存在的理由：run 在飞时观察面出的任何问题都不能打挂 run（run 的真相在 journal），
 // 而"事件落进哪个会话"是一条静默错就很难查的不变式——错了不报错，只是事件出现在别人的对话里。
 import { describe, expect, it, vi } from "vitest";
-import { createSessionId, type DynamicWorkflowRunProgressPayload, type SessionId } from "@zcode/contracts";
+import {
+  createSessionId,
+  type DynamicWorkflowRunProgressPayload,
+  type SessionId,
+} from "@zcode/contracts";
 import type { AgentRuntime } from "@zcode/core";
 import { createDynamicWorkflowRunProgressSink } from "../src/app/dynamic-workflow-run-progress-sink.js";
 
@@ -45,6 +49,24 @@ function makeSink(
 }
 
 describe("dwf run 进度汇：正路径", () => {
+  it("task 尚未登记时也传递 run 原 scope，且不把它混入持久事件正文", async () => {
+    const scope = {
+      billingBinding: {
+        origin: "https://example.invalid",
+        accountRef: "A",
+        accountEpoch: 1,
+        policyRevision: "scope",
+      },
+    };
+    const record = vi.fn(async () => {});
+    const { sink } = makeSink({ record });
+    sink(progress, { parentSessionId: OWN_SESSION, billingScope: scope });
+    await Promise.resolve();
+    expect(record).toHaveBeenCalledWith(progress, scope);
+    expect(progress).not.toHaveProperty("billingBinding");
+    expect(progress).not.toHaveProperty("billingScope");
+  });
+
   it("把载荷原样追加到本 app 的 runtime", async () => {
     const { appended, sink, warnings } = makeSink();
     sink(progress, { parentSessionId: OWN_SESSION });

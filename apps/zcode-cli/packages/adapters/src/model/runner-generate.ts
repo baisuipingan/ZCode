@@ -350,6 +350,7 @@ export async function runGenerateText(input: {
         providerMetadata: result.providerMetadata as Record<string, unknown> | undefined,
       };
     } catch (error) {
+      await input.request.reportManagedFailure?.(error);
       // 合并后鉴权解析进入 attempt try；与 stream 一致保留网络前凭据缺失的类型化错误。
       if (
         error instanceof ModelProtocolError &&

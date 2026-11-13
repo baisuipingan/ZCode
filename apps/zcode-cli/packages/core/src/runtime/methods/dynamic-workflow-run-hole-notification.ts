@@ -30,6 +30,7 @@ export async function notifyHoleReached(
   this: AgentRuntimeInternal,
   payload: DynamicWorkflowRunProgressPayload,
   traceContext: TraceContext,
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding,
 ): Promise<void> {
   if (payload.eventType !== HOLE_REACHED_EVENT_TYPE) return;
   const instance = payload.payload.instance as Record<string, unknown> | undefined;
@@ -66,6 +67,7 @@ export async function notifyHoleReached(
     ...(after === undefined ? {} : { after }),
   };
   this.enqueueBackgroundTaskNotification({
+    ...(billingBinding ? { billingBinding } : {}),
     originMeta: {
       backgroundSource: "workflow",
       title: runLabel,

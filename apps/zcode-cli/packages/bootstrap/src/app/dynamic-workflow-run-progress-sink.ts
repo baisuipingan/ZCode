@@ -7,7 +7,7 @@
  */
 
 import type { DynamicWorkflowRunProgressPayload, Logger, SessionId } from "@zcode/contracts";
-import type { AgentRuntime } from "@zcode/core";
+import type { AgentRuntime, RuntimeBillingScope } from "@zcode/core";
 
 interface DynamicWorkflowRunProgressSinkDeps {
   /** 惰性取 runtime：run service 在 runtime 构造**之前**就已建好（它是 runtime 的依赖之一）。 */
@@ -40,9 +40,13 @@ interface DynamicWorkflowRunProgressSinkDeps {
  * （真要支持子会话发起 run，需要的是按 sessionId 找 runtime 的注册表，而 bootstrap 侧没有——
  * 子 runtime 活在 core 内部。那是一次带自己的设计的改动。）
  */
-export function createDynamicWorkflowRunProgressSink(
-  deps: DynamicWorkflowRunProgressSinkDeps,
-): (progress: DynamicWorkflowRunProgressPayload, routing?: { parentSessionId?: string }) => void {
+export function createDynamicWorkflowRunProgressSink(deps: DynamicWorkflowRunProgressSinkDeps): (
+  progress: DynamicWorkflowRunProgressPayload,
+  routing?: {
+    parentSessionId?: string;
+    billingScope?: RuntimeBillingScope;
+  },
+) => void {
   const warn = (message: string, runId: string, extra: Record<string, unknown> = {}): void => {
     deps.logger?.warn?.(message, {
       event: "dynamic_workflow.run_progress.append_failed",
@@ -57,12 +61,16 @@ export function createDynamicWorkflowRunProgressSink(
     // 缺席是合法的（submit 未带 parentSessionId）：本 app 的端口只可能被本会话触达，
     // 所以缺席等价于"就是本会话"。只有**明确不等**才是接线错误。
     if (parentSessionId !== undefined && parentSessionId !== deps.sessionId) {
-      warn("Dynamic workflow run progress dropped: parent session is not this app", progress.runId, {
-        event: "dynamic_workflow.run_progress.session_mismatch",
-        expectedSessionId: deps.sessionId,
-        parentSessionId,
-        reason: "run_parent_session_not_owned_by_this_app",
-      });
+      warn(
+        "Dynamic workflow run progress dropped: parent session is not this app",
+        progress.runId,
+        {
+          event: "dynamic_workflow.run_progress.session_mismatch",
+          expectedSessionId: deps.sessionId,
+          parentSessionId,
+          reason: "run_parent_session_not_owned_by_this_app",
+        },
+      );
       return;
     }
 
@@ -70,7 +78,9 @@ export function createDynamicWorkflowRunProgressSink(
     // （事件库 / 持久化 / sink 扇出）上抛。两者都必须退化成"记一条日志的 no-op"。
     let appended: Promise<void>;
     try {
-      appended = deps.getRuntime().recordDynamicWorkflowRunProgress(progress);
+      appended = deps
+        .getRuntime()
+        .recordDynamicWorkflowRunProgress(progress, routing?.billingScope);
     } catch (error) {
       warn("Dynamic workflow run progress append failed", progress.runId, {
         errorMessage: error instanceof Error ? error.message : String(error),

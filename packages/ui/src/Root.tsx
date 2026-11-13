@@ -1,3 +1,9 @@
+import {
+  BrandAccountLogin,
+  BrandAccountProvider,
+  OfficialDynamicWorkflowSync,
+  useBrandAccount,
+} from "@/brand-account/index.js";
 import { useInterfaceModeTelemetry } from "@/lib/appTelemetry.js";
 import { ProjectDirectoryProvider } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { RemoteProjectPicker } from "@/project-sidebar/RemoteProjectPicker.js";
@@ -32,10 +38,6 @@ import {
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
 } from "@/v4/composer/composerDraftStore.js";
-import {
-  useDynamicWorkflowAvailabilityLoader,
-  useDynamicWorkflowUserModeSync,
-} from "@/hooks/useDynamicWorkflowAvailability.js";
 import { DirectoryBrowser } from "@/DirectoryBrowser.js";
 import {
   attachRemoteProjectWorkspace,
@@ -167,26 +169,41 @@ export function Root(props: RootProps) {
               initialIsRestoringOAuthSession
             >
               <TabStoreProvider>
-                <ProjectDirectoryProvider isDesktop={props.isDesktop}>
-                  <DiffsWorkerPoolProvider>
-                    <WebRemoteControlFeatureProvider enabled={props.webRemoteControlFeatureEnabled}>
-                      <AssistantCodeCommentFeatureProvider
-                        enabled={props.assistantCodeCommentCardsEnabled}
+                <BrandAccountProvider>
+                  <ProjectDirectoryProvider isDesktop={props.isDesktop}>
+                    <DiffsWorkerPoolProvider>
+                      <WebRemoteControlFeatureProvider
+                        enabled={props.webRemoteControlFeatureEnabled}
                       >
-                        <CodingPlanUpgradeDialogProvider>
-                          <RewardsProvider desktop={props.isDesktop === true}>
-                            <RequestSecurityHost />
-                            <MarketingTouchProvider desktop={props.isDesktop === true}>
-                              <RemoteConnectionProgressProvider>
-                                <RootInner {...props} />
-                              </RemoteConnectionProgressProvider>
-                            </MarketingTouchProvider>
-                          </RewardsProvider>
-                        </CodingPlanUpgradeDialogProvider>
-                      </AssistantCodeCommentFeatureProvider>
-                    </WebRemoteControlFeatureProvider>
-                  </DiffsWorkerPoolProvider>
-                </ProjectDirectoryProvider>
+                        <AssistantCodeCommentFeatureProvider
+                          enabled={props.assistantCodeCommentCardsEnabled}
+                        >
+                          <CodingPlanUpgradeDialogProvider
+                            enabled={!props.services.brandAccountService}
+                          >
+                            <RewardsProvider
+                              desktop={props.isDesktop === true}
+                              enabled={!props.services.brandAccountService}
+                            >
+                              <RequestSecurityHost />
+                              <OptionalOfficialMarketingProvider
+                                desktop={props.isDesktop === true}
+                                enabled={!props.services.brandAccountService}
+                              >
+                                <RemoteConnectionProgressProvider>
+                                  {!props.services.brandAccountService ? (
+                                    <OfficialDynamicWorkflowSync />
+                                  ) : null}
+                                  <RootInner {...props} />
+                                </RemoteConnectionProgressProvider>
+                              </OptionalOfficialMarketingProvider>
+                            </RewardsProvider>
+                          </CodingPlanUpgradeDialogProvider>
+                        </AssistantCodeCommentFeatureProvider>
+                      </WebRemoteControlFeatureProvider>
+                    </DiffsWorkerPoolProvider>
+                  </ProjectDirectoryProvider>
+                </BrandAccountProvider>
               </TabStoreProvider>
             </StoreProvider>
           </PlatformProvider>
@@ -194,6 +211,19 @@ export function Root(props: RootProps) {
       </TooltipProvider>
     </LucideProvider>
   );
+}
+
+function OptionalOfficialMarketingProvider({
+  children,
+  desktop,
+  enabled,
+}: {
+  children: React.ReactNode;
+  desktop: boolean;
+  enabled: boolean;
+}) {
+  if (!enabled) return children;
+  return <MarketingTouchProvider desktop={desktop}>{children}</MarketingTouchProvider>;
 }
 
 function RootInner({
@@ -220,6 +250,8 @@ function RootInner({
   webRemoteControlTerminalTransportState,
   initialWorkspaceLoadingFallback,
 }: RootProps) {
+  const brandAccount = useBrandAccount();
+  const [brandBrowseAllowed, setBrandBrowseAllowed] = useState(false);
   useInterfaceModeTelemetry(platform, isDesktop === true);
   useEffect(() => {
     setRequestSecurityReporter(platform);
@@ -254,11 +286,6 @@ function RootInner({
     [],
   );
 
-  // 动态工作流灰度快照的唯一取数点：
-  // 放在 app 级 ServiceProvider 这一层取一次，自动化页与 run 面板只读。消费方可能位于
-  // 工作区级 ServiceProvider 内（远程 Host 的 accessor），由它们取数会拿到另一台 Host 的答案。
-  useDynamicWorkflowAvailabilityLoader(services.codingPlanSubscriptionService);
-
   const { intl, locale } = useZCodeIntl();
   const handleRemoteConnectionTargetChange = useSourceServerUpdateNotifications({
     enabled: isDesktop === true,
@@ -267,7 +294,13 @@ function RootInner({
   const theme = useZCodeStore((state) => state.theme);
   const user = useZCodeStore((state) => state.user);
   const isRestoringOAuthSession = useZCodeStore((state) => state.isRestoringOAuthSession);
-  useWebRemoteControlAuthSync(platform, services.oauthService, user?.id, isRestoringOAuthSession);
+  useWebRemoteControlAuthSync(
+    platform,
+    services.oauthService,
+    user?.id,
+    isRestoringOAuthSession,
+    !brandAccount.enabled,
+  );
   const setUser = useZCodeStore((state) => state.setUser);
   const setIsRestoringOAuthSession = useZCodeStore((state) => state.setIsRestoringOAuthSession);
   const setOAuthError = useZCodeStore((state) => state.setOAuthError);
@@ -279,14 +312,6 @@ function RootInner({
     refresh: refreshAppSettings,
     update: updateAppSettings,
   } = useSettings();
-  // docs/dynamic-workflow/launch.md「The user's choice」：设置里的动态工作流选择变化后，通知本窗口
-  // 的 Host 重发 CLI 策略（并转发给远程 Host），再重读灰度快照。
-  useDynamicWorkflowUserModeSync({
-    settingsLoaded: Boolean(appSettings),
-    userMode: appSettings?.dynamicWorkflowMode,
-    zcodeAgentService: services.zcodeAgentService,
-    codingPlanSubscriptionService: services.codingPlanSubscriptionService,
-  });
   const [welcomeScreenOpenReason, setWelcomeScreenOpenReason] =
     useState<WelcomeScreenOpenReason | null>(() =>
       consumeZcodeJwtInvalidRestartMarker() ? "session-expired" : null,
@@ -543,6 +568,10 @@ function RootInner({
   const refreshProviderState = useRootProviderStateRefresh(services);
   useRootProviderSettingsSnapshot(services);
   useEffect(() => {
+    if (brandAccount.enabled) {
+      setProviderFamilyDomainMigrationComplete(true);
+      return;
+    }
     let disposed = false;
 
     void (async () => {
@@ -570,7 +599,7 @@ function RootInner({
     return () => {
       disposed = true;
     };
-  }, [refreshAppSettings, refreshProviderState, services]);
+  }, [brandAccount.enabled, refreshAppSettings, refreshProviderState, services]);
 
   const shouldPreferDirectoryBrowser = Boolean(preferDirectoryBrowser);
   const supportsEmbeddedBrowser = explicitSupportsEmbeddedBrowser ?? Boolean(isDesktop);
@@ -578,13 +607,16 @@ function RootInner({
   const rootProviderAvailability = resolveProviderAvailabilityState({
     modelSelectionView: rootModelSelectionView,
   });
-  const providerStartupSyncPending = isProviderStartupSyncPending({
-    providerFamilyDomainMigrationComplete,
-    modelSelectionViewHydrated:
-      rootProviderAvailability.hydrated || rootModelSelectionRead.state.status === "error",
-  });
+  const providerStartupSyncPending =
+    !brandAccount.enabled &&
+    isProviderStartupSyncPending({
+      providerFamilyDomainMigrationComplete,
+      modelSelectionViewHydrated:
+        rootProviderAvailability.hydrated || rootModelSelectionRead.state.status === "error",
+    });
   const isWebRemoteControlRoot = Boolean(webRemoteControlWorkspaceSwitcher);
   const providerAvailabilityLoginEntryGuardEnabled =
+    !brandAccount.enabled &&
     shouldEnableProviderAvailabilityLoginEntryGuard({
       isWebRemoteControlRoot,
     });
@@ -613,11 +645,13 @@ function RootInner({
         });
       },
     });
-  const isResolvingProviderStartupState = shouldResolveProviderStartupState({
-    isWebRemoteControlRoot,
-    providerStartupSyncPending,
-    providerAvailabilityStartupCheckCompleted,
-  });
+  const isResolvingProviderStartupState =
+    !brandAccount.enabled &&
+    shouldResolveProviderStartupState({
+      isWebRemoteControlRoot,
+      providerStartupSyncPending,
+      providerAvailabilityStartupCheckCompleted,
+    });
   const isStartupProviderLoginEntryOpen = welcomeScreenOpenReason === "startup-provider-required";
   // 首次安装时 provider 登录入口判定晚于 workspace 注入，ChatView 会先 mount 并触发草稿预热。
   // 这里把 provider 启动检查纳入 workspace 恢复门禁，避免未连接账号前启动 ZCode session。
@@ -744,7 +778,10 @@ function RootInner({
         .getWorkspaceState(workspacePath, workspaceIdentity).activeTaskId;
       if (!isDesktop || !restoreSelection || !selectedTask) {
         if (projectId !== undefined)
-          logger.info("[Root] 按原项目初始化远程草稿", { workspaceIdentity, projectId });
+          logger.info("[Root] 按原项目初始化远程草稿", {
+            workspaceIdentity,
+            projectId,
+          });
         startDraftInWorkspace(workspacePath, workspaceIdentity, { projectId });
       }
     },
@@ -1061,6 +1098,7 @@ function RootInner({
   }, [platform]);
 
   useRootOAuthEffects({
+    enabled: !brandAccount.enabled,
     accountIntentKey: JSON.stringify([
       user?.id,
       appSettings?.providerFamilyDomain,
@@ -1239,18 +1277,22 @@ function RootInner({
   }, [isSettingsTabActive, workspaceShellPath]);
 
   useEffect(() => {
-    if (!loginEntryRequest) {
+    if (brandAccount.enabled || !loginEntryRequest) {
       return;
     }
     // 登录入口已从模态弹窗收敛为 WelcomeScreen。
     // provider 连接请求仍要先退出首次启动引导语义，避免连接完成后误创建默认 workspace。
     setWelcomeScreenOpenReason("provider-request");
-  }, [loginEntryRequest]);
+  }, [brandAccount.enabled, loginEntryRequest]);
 
   // 登录入口不依赖会话；保持引用稳定，避免草稿更新穿透侧栏 memo。
   const handleOpenLoginEntry = useCallback(() => {
+    if (brandAccount.enabled) {
+      setBrandBrowseAllowed(false);
+      return;
+    }
     setWelcomeScreenOpenReason("manual-login");
-  }, []);
+  }, [brandAccount.enabled]);
   const handleWelcomeScreenComplete = useCallback(
     async (reason: LoginCompleteReason) => {
       await refreshAppSettings();
@@ -1387,7 +1429,10 @@ function RootInner({
     // 改选新连接只清除原项目恢复意图；从设置进入仍须独立完成设备管理。
     setRemoteConnectionOpenPreference((current) =>
       current?.completion === "device-management"
-        ? { completion: "device-management", returnTarget: current.returnTarget }
+        ? {
+            completion: "device-management",
+            returnTarget: current.returnTarget,
+          }
         : null,
     );
   }, []);
@@ -1523,7 +1568,19 @@ function RootInner({
     );
   }
 
-  if (welcomeScreenOpenReason) {
+  if (
+    brandAccount.enabled &&
+    brandAccount.snapshot?.status !== "authenticated" &&
+    !brandBrowseAllowed
+  ) {
+    return (
+      <RootShell>
+        <BrandAccountLogin onBrowse={() => setBrandBrowseAllowed(true)} />
+      </RootShell>
+    );
+  }
+
+  if (!brandAccount.enabled && welcomeScreenOpenReason) {
     return (
       <RootShell>
         {rootModelSelectionErrorNode}

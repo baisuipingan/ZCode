@@ -18,7 +18,10 @@ interface ModelSelectionCompletionView {
       readonly modelId: string;
       readonly config: {
         readonly optionSpecs: {
-          readonly reasoningLevel: { readonly values: readonly string[] };
+          readonly reasoningLevel: {
+            readonly values: readonly string[];
+            readonly defaultLevel?: string;
+          };
         };
       };
     }[];
@@ -26,9 +29,11 @@ interface ModelSelectionCompletionView {
 }
 
 export function resolveInitialModelSelection(input: {
-  readonly configuredDefault?: ModelSelection;
+  readonly configuredDefault?: ModelSelection | null;
   readonly registry: ProviderRegistryView;
 }): InitialModelSelectionResolution {
+  // 受管目录明确没有有效默认时必须等待用户选择，不能猜另一模型并产生消费。
+  if (input.configuredDefault === null) return { source: "none" };
   // 这里只构造 Host 的初始推荐，不解析已有会话意图。失效默认是可丢弃偏好，
   // 应继续按 Registry 顺序推荐；不能把历史选择留空的规则误用于新草稿初始化。
   if (input.configuredDefault) {
@@ -54,7 +59,7 @@ export function resolveInitialModelSelection(input: {
   return { source: "none" };
 }
 
-/** 仅在用户主动选模型或全新初始化时构造最高档；不能用于恢复/重解析已有选择。 */
+/** 仅在用户主动选模型或全新初始化时采用显式默认/既有最高档；不能补写恢复选择。 */
 export function completeNewModelSelection(
   registry: ModelSelectionCompletionView,
   selection: ModelSelection,
@@ -62,7 +67,9 @@ export function completeNewModelSelection(
   const model = registry.providers
     .find((provider) => provider.providerId === selection.providerId)
     ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  const reasoningLevel = model?.config.optionSpecs.reasoningLevel.values.at(-1);
+  const spec = model?.config.optionSpecs.reasoningLevel;
+  // 原因：受管模型的默认档位可低于最高档，不能因跨层投影丢失而擅自升级推理成本。
+  const reasoningLevel = spec?.defaultLevel ?? spec?.values.at(-1);
   if (!reasoningLevel) return undefined;
   return {
     providerId: selection.providerId,

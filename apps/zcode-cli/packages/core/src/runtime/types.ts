@@ -434,8 +434,18 @@ export type RuntimeModelFactory = (input: RuntimeModelFactoryInput) => Model;
  * 子 runtime 通过 deriveChildClientPorts 派生端口，将请求路由到父端口绑定的客户端会话。
  */
 export interface ProviderRuntimeHeadersPort {
+  reportManagedOutcome?(input: {
+    outcome: import("@zcode/shared").ManagedInferenceOutcome;
+    sessionId: SessionId;
+    traceContext?: TraceContext;
+  }): void;
+  /** 子 runtime 捕获的原执行归属；根端口不从当前账号推测。 */
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
   shouldRefreshBeforeModelRequest?(input: { providerId: string; modelId: string }): boolean;
   refreshBeforeModelRequest(input: {
+    managedAccess?: import("@zcode/shared").ManagedProviderAccess;
+    modelConfigRevision?: string;
+    phase?: "admission" | "attempt";
     accountAccess?: ZCodeProviderAccountAccess;
     expectedAccountScope?: string;
     rejectedProjectTokenFingerprint?: string;
@@ -575,6 +585,7 @@ export interface ContinueActiveTargetLoopOptions {
 }
 
 export interface ActiveForegroundExecutionState {
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
   controller: AbortController;
   disposeParentAbort: () => void;
   foregroundExecutionId: string;

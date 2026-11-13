@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 import { HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
 import { runCommand, runCommandAndReadStdout } from "../../scripts/spawn-command.mjs";
 import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config.mjs";
+import { resolveBuildTimeConfig } from "../../scripts/build-time-config.mjs";
+import { prepareMacSparkleRuntime } from "./scripts/milocode-sparkle-runtime.mjs";
 import { noticesFileName, stageElectronNotices } from "../../scripts/third-party-notices.mjs";
 import { resolveNativeSearchReleasePlan } from "../../scripts/native-search-tools-config.mjs";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
@@ -39,7 +41,7 @@ import {
   createDesktopNativePackagePrunePatterns,
   parseAsarListWithPackState,
 } from "./scripts/desktop-native-package-policy.mjs";
-import { replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
+import { assertAppAsarIntegrity, replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
 import {
   patchNsisInstallSectionFile,
   restoreNsisInstallSectionFileSync,
@@ -47,6 +49,17 @@ import {
 
 const buildMetadata = getBuildMetadata();
 const targetPlatform = getTargetPlatform();
+const miloCodeUpdateConfig = await resolveBuildTimeConfig();
+const shouldPackageMiloCodeSparkle =
+  targetPlatform.os === "darwin" &&
+  targetPlatform.arch === "arm64" &&
+  Boolean(miloCodeUpdateConfig.milocodeUpdateBaseUrl) &&
+  Boolean(miloCodeUpdateConfig.milocodeSparklePublicKey);
+const miloCodeWindowsUpdatesEnabled =
+  targetPlatform.os === "win32" &&
+  targetPlatform.arch === "x64" &&
+  Boolean(miloCodeUpdateConfig.milocodeUpdateBaseUrl);
+const miloCodeSparkleResources = resolve(import.meta.dirname, "resources/milocode-update");
 // 修复原因：Windows Chrome 导入入口已暂时隐藏，默认安装包不应继续携带、签名或校验原生 helper。
 // 代码和完整供应链保留在显式 opt-in 后，便于未来恢复而不影响当前发布流程。
 const shouldPackageWindowsBrowserImportHelper =
@@ -238,6 +251,8 @@ if (
 }
 
 const PACKAGING_PRUNE_PATTERNS = [
+  // 类型检查会更新增量元数据；它不参与运行，若在 Builder 收集 stat 后增长会破坏整个 asar 偏移。
+  "!**/*.tsbuildinfo",
   "!**/*.map",
   "!**/*.pdb",
   "!**/__tests__/**",
@@ -643,6 +658,11 @@ export default {
     `node_modules/node-pty/prebuilds/${targetPlatform.key}/**`,
   ],
   beforePack: async (context) => {
+    if (shouldPackageMiloCodeSparkle && context.electronPlatformName === "darwin") {
+      await runTimedAsync("beforePack:prepareMiloCodeSparkle", () =>
+        prepareMacSparkleRuntime({ targetArch: targetPlatform.arch }),
+      );
+    }
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>
       restoreTargetNodePtyPrebuild({ desktopPackageRoot, targetPlatform }),
     );
@@ -687,6 +707,9 @@ export default {
     await stageElectronNotices(extractedLicenseRoot, resources, framework.version);
   },
   afterPack: async (context) => {
+    await runTimedAsync("afterPack:assertInitialAppAsarIntegrity", () =>
+      assertAppAsarIntegrity(resolveAppAsarPath(context)),
+    );
     const actualWindowsTarget =
       context.electronPlatformName === "win32"
         ? resolveElectronBuilderWindowsTarget({
@@ -744,6 +767,18 @@ export default {
     }
   },
   extraResources: [
+    ...(shouldPackageMiloCodeSparkle
+      ? [
+          {
+            from: resolve(miloCodeSparkleResources, "milocode_sparkle.node"),
+            to: "milocode-update/milocode_sparkle.node",
+          },
+          {
+            from: resolve(miloCodeSparkleResources, "SPARKLE-LICENSE"),
+            to: "milocode-update/SPARKLE-LICENSE",
+          },
+        ]
+      : []),
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
     ...(targetPlatform.os === "darwin"
       ? [
@@ -860,6 +895,9 @@ export default {
     },
   ],
   mac: {
+    ...(shouldPackageMiloCodeSparkle
+      ? { extraFrameworks: [resolve(miloCodeSparkleResources, "Sparkle.framework")] }
+      : {}),
     minimumSystemVersion: "13.0.0",
     target: ["dmg", "zip"],
     category: "public.app-category.developer-tools",
@@ -868,6 +906,23 @@ export default {
     // Chromium 自带文案随之丢失（视频控件菜单只剩图标、播放速度子菜单空白）。
     electronLanguages: ["en", "zh_CN"],
     extendInfo: {
+      ...(shouldPackageMiloCodeSparkle
+        ? {
+            SUFeedURL: new URL(
+              "stable/darwin-arm64/appcast.xml",
+              miloCodeUpdateConfig.milocodeUpdateBaseUrl,
+            ).href,
+            MiloCodeReleaseBaseURL: miloCodeUpdateConfig.milocodeUpdateBaseUrl,
+            SUPublicEDKey: miloCodeUpdateConfig.milocodeSparklePublicKey,
+            SURequireSignedFeed: true,
+            SUSignedFeedFailureExpirationInterval: 0,
+            SUVerifyUpdateBeforeExtraction: true,
+            SUEnableAutomaticChecks: false,
+            SUAllowsAutomaticUpdates: false,
+            SUAutomaticallyUpdate: false,
+            SUSendProfileInfo: false,
+          }
+        : {}),
       NSAppleEventsUsageDescription: `${desktopProductIdentity.productName} needs Apple Events access to coordinate local automation workflows with user-approved desktop apps.`,
       // 缺失该 key 时 macOS 会静默拒绝 CoreBluetooth 枚举，内置浏览器 Web Bluetooth
       // 的设备选择器列表恒为空（实测 Chrome 有蓝牙隐私权限则正常）。
@@ -903,7 +958,9 @@ export default {
   win: {
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
-    verifyUpdateCodeSignature: true,
+    // MiloCode 用内嵌 Ed25519 公钥验证清单及整包；Main 在下载后和实际安装前均强制验证。
+    // Authenticode 只适用于仍使用发行证书的构建，不能把两种策略混成缺签名也继续。
+    verifyUpdateCodeSignature: !miloCodeWindowsUpdatesEnabled,
     signExts: [".node", ".dll"],
     // Bugfix: Windows CI 之前完全依赖 electron-builder 内置 signtool.exe，
     // 一旦 runner 的证书链路要求改走 vsigntool，打包阶段就会在内置签名环节卡死。

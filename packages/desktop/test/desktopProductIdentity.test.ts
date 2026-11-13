@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   desktopProductIdentities,
@@ -11,7 +11,74 @@ import {
   resolveDesktopProductIdentity,
 } from "../scripts/desktop-product-identity.mjs";
 
+const runtimeIdentity = vi.hoisted(() => ({ isPackaged: true, flavor: "production" }));
+vi.mock("../src/main/desktopElectronApp.js", () => ({
+  isElectronAppPackaged: () => runtimeIdentity.isPackaged,
+  getElectronAppPath: () => "/fixture/electron-app-data",
+}));
+vi.mock("@zcode/services/node", () => ({
+  getAppConfigDir: () => "/fixture/business/.zcode",
+  getDataBaseDir: () => "/fixture/business",
+  listSSHConfigAliasesFromLocalConfig: () => [],
+}));
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZCODE_PRODUCT_FLAVOR() {
+    return runtimeIdentity.flavor;
+  },
+}));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+async function readRuntimeIdentity(options: {
+  flavor: "production" | "preview";
+  isPackaged?: boolean;
+  applicationName?: string;
+}) {
+  runtimeIdentity.flavor = options.flavor;
+  runtimeIdentity.isPackaged = options.isPackaged ?? true;
+  vi.stubEnv("ZCODE_DESKTOP_APPLICATION_NAME", options.applicationName ?? "");
+  vi.stubEnv("ZCODE_DESKTOP_USER_DATA_DIR", "");
+  vi.stubEnv("ZCODE_DESKTOP_SESSION_DATA_DIR", "");
+  vi.stubEnv("ZCODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA", "");
+  return import("../src/main/desktopRuntimeEnv.js");
+}
+
 describe("desktop product identity", () => {
+  it.each(["production", "preview"] as const)(
+    "已打包 %s 的运行名称和Electron默认数据目录复用产品身份",
+    async (flavor) => {
+      const runtime = await readRuntimeIdentity({ flavor });
+      const productName = desktopProductIdentities[flavor].productName;
+      expect(runtime.runtimeApplicationName).toBe(productName);
+      expect(runtime.runtimeUserDataPath).toBe(join("/fixture/electron-app-data", productName));
+      expect(runtime.runtimeSessionDataPath).toBe(
+        join("/fixture/electron-app-data", productName, "session"),
+      );
+    },
+  );
+
+  it("开发态保留ZCode Dev，不借用正式安装身份", async () => {
+    const runtime = await readRuntimeIdentity({ flavor: "production", isPackaged: false });
+    expect(runtime.runtimeApplicationName).toBe("ZCode Dev");
+  });
+
+  it("显式隔离名称仍优先，空白覆盖回到编译身份", async () => {
+    const runtime = await readRuntimeIdentity({
+      flavor: "preview",
+      applicationName: "  E2E isolated desktop  ",
+    });
+    expect(runtime.runtimeApplicationName).toBe("E2E isolated desktop");
+    expect(runtime.runtimeUserDataPath).toBe(
+      join("/fixture/electron-app-data", "E2E isolated desktop"),
+    );
+    vi.resetModules();
+    const fallback = await readRuntimeIdentity({ flavor: "preview", applicationName: "  " });
+    expect(fallback.runtimeApplicationName).toBe("MiloCode Preview");
+  });
+
   it("根锁文件的发布版本与构建版本一致", () => {
     // 合并上游发布提交只对齐当前版本，不恢复上游旧版本，也不重算依赖锁。
     const readRootJson = (name: string) =>
@@ -25,10 +92,10 @@ describe("desktop product identity", () => {
   it("ZCODE_ENV=test 使用可与生产版并排安装的 Preview 身份", () => {
     expect(resolveDesktopProductIdentity({ ZCODE_ENV: "test" })).toEqual({
       flavor: "preview",
-      appId: "dev.zcode.app.preview",
-      productName: "ZCode Preview",
-      linuxExecutableName: "zcode-preview",
-      linuxPackageName: "zcode-preview",
+      appId: "app.milo.code.preview",
+      productName: "MiloCode Preview",
+      linuxExecutableName: "milocode-preview",
+      linuxPackageName: "milocode-preview",
       cuaHelperInstallVariant: "preview",
     });
   });
@@ -56,7 +123,7 @@ describe("desktop product identity", () => {
     }
   });
 
-  it("测试后端永远是 Preview 身份，开关无法把它变成正式 ZCode", () => {
+  it("测试后端永远是 Preview 身份，开关无法把它变成正式 MiloCode", () => {
     expect(resolveDesktopProductFlavor({ ZCODE_ENV: "test", ZCODE_PREVIEW_IDENTITY: "0" })).toBe(
       "preview",
     );
@@ -80,10 +147,10 @@ describe("desktop product identity", () => {
     );
     expect(desktopProductIdentities.production).toEqual({
       flavor: "production",
-      appId: "dev.zcode.app",
-      productName: "ZCode",
-      linuxExecutableName: "zcode",
-      linuxPackageName: "zcode",
+      appId: "app.milo.code",
+      productName: "MiloCode",
+      linuxExecutableName: "milocode",
+      linuxPackageName: "milocode",
       cuaHelperInstallVariant: null,
     });
   });
@@ -113,6 +180,6 @@ describe("desktop product identity", () => {
   });
 
   it("开发态继续使用独立 AUMID，避免污染打包版 Shell 身份", () => {
-    expect(resolveWindowsAppUserModelId({}, { isPackaged: false })).toBe("cn.aminer.zcode");
+    expect(resolveWindowsAppUserModelId({}, { isPackaged: false })).toBe("app.milo.code.dev");
   });
 });

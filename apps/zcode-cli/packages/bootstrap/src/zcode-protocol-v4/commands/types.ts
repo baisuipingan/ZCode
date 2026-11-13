@@ -125,7 +125,7 @@ export interface V4CommandCoreHost {
   admitInputCommand?(
     envelope: CommandEnvelope,
     sessionId: string,
-    admission: { admissionSeq: number; admittedAt: number; queueItemId: string },
+    admission: import("./executor.js").V4CommandAdmission,
   ): Promise<ConversationInputIntent | null>;
   cancelInputCommand?(sessionId: string, queueItemId: string, reason: string): Promise<void>;
   discardSharedContext?(sessionId: string, contextId: string): Promise<boolean>;

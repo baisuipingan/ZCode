@@ -168,7 +168,11 @@ function freezeView(revision: number, providers: readonly Provider[]): ProviderR
       config: provider.config,
       models: Object.freeze(
         provider.models.map((model) =>
-          Object.freeze({ modelId: model.modelId, config: model.config }),
+          Object.freeze({
+            modelId: model.modelId,
+            config: model.config,
+            ...(model.displayName ? { displayName: model.displayName } : {}),
+          }),
         ),
       ),
     }),

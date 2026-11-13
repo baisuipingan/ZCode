@@ -61,6 +61,7 @@ export class V4CommandExecutor {
 }
 
 export interface V4CommandAdmission {
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
   admissionSeq: number;
   admittedAt: number;
   queueItemId: string;

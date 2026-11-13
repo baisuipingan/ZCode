@@ -1,5 +1,29 @@
 # Tool Change Chain Spec
 
+## 托管后台任务唤醒保留原扣费归属（2026-11-13）
+
+Agent/Bash/Workflow 创建任务时由 runtime task registry 克隆创建轮的 `billingBinding`；完成通知与
+子代理 SendMessage 回报只读取该任务的原快照，不在完成时借用当前账户。通知命令显式携带该绑定，
+同优先级、同 off-peak execution 且同绑定才合批；活动轮吸收通知也必须同绑定。唤醒轮同时给
+foreground execution 与 `modelExecution.requestDependencies` 传绑定，使模型鉴权与 `turn_settled`
+归属一致。普通 API 任务保留无绑定语义，换号后的旧绑定继续由既有 runner/Host 闸门拒绝。
+任务复原保留原绑定；workflow service 在 submit/amend 新 run 首个 await 前冻结匹配创建 trace
+的 scope，并传给延迟 actor 与早于 tracker 登记的进度通知。同 run 的工具、GUI、自动 resume
+均保留原 scope，终态重臂只刷新分支代和结算面，冷恢复不能向当前活动轮借用授权。
+工具 schema、权限、模型可见文本与 App 协议不变。详见 07-subagent.md 与托管推理 spec；
+回归覆盖空闲唤醒、同/异绑定合批、活动轮吸收、子代理回报、换号迟到和普通 API。
+
+## 托管多模型的默认推理档位（2026-11-12）
+
+后台逐模型的 `default_reasoning` 经 Host → shared `reasoningLevel.defaultLevel` → Registry →
+模型目录/选择器传递。`defaultLevel` 可选，存在时必须属于 `values`；未指定推理档位的
+`ListModels` 默认投影、主模型选择与 `subagent_model` 默认解析优先采用它，无字段的既有供应商
+仍沿用原最高档默认。辅助最低档选择保持原规则，不重排 `values`，不改变工具 schema、权限、
+已持久选择或模型授权。回归须包含非全局默认模型 `[low, high]`、默认 `low` 经真实
+Registry/RPC/目录后仍为 `low`，以及非法默认拒绝和配置 overlay/序列化保真。
+
+## 既有工具链规则
+
 工具 schema、顺序与描述是固定字节（tools 段字节进入缓存前缀）：`toToolJsonSchema` 按
 zod v4 toJSONSchema 的 key 顺序输出——`$schema` 在最前，`description`、`default` 在 `type` 前，
 数组的 `minItems`/`maxItems` 在 `type` 前，属性声明顺序不变；ToolSearch 输入 schema 走同一入口。

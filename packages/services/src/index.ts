@@ -2,6 +2,23 @@
 export { type ServiceDescriptor, createServiceDescriptor } from "./descriptors.js";
 export { ServiceCollection, type ServiceExposurePolicy } from "./collection.js";
 export {
+  IBrandAccountService,
+  type BrandAccountErrorCode,
+  type BrandAccountError,
+  type BrandPublicSettings,
+  type BrandAccountUser,
+  type BrandWalletSnapshot,
+  type BrandAccountSnapshot,
+  type BrandUsageRecord,
+  type BrandUsageSnapshot,
+  type BrandLoginInput,
+  type BrandPaymentMethod,
+  type BrandCheckout,
+  type BrandOrder,
+  type BrandOrderPage,
+  type BrandCreateOrderResult,
+} from "./brand-account/contract.js";
+export {
   IModelSelectionService,
   IProviderSettingsService,
   type ModelSelectionView,

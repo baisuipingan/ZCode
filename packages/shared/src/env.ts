@@ -11,6 +11,9 @@ declare const __ZCODE_PRODUCT_FLAVOR__: string;
 declare const __ZCODE_ARMS_RUM_ENDPOINT__: string;
 declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
 declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
+declare const __MILOCODE_UPDATE_BASE_URL__: string;
+declare const __MILOCODE_UPDATE_PUBLIC_KEYS_JSON__: string;
+declare const __MILOCODE_SPARKLE_PUBLIC_KEY__: string;
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -60,6 +63,16 @@ export const ZCODE_TELEMETRY_REPORT_ENDPOINT: string =
 /** 桌面自动更新是否启用。 */
 export const ZCODE_AUTO_UPDATE_ENABLED: boolean =
   typeof __ZCODE_AUTO_UPDATE_ENABLED__ !== "undefined" ? __ZCODE_AUTO_UPDATE_ENABLED__ : false;
+
+/** 自有发布源及公钥为编译期常量；空地址表示尚未配置，不回退原厂更新源。 */
+export const MILOCODE_UPDATE_BASE_URL: string =
+  typeof __MILOCODE_UPDATE_BASE_URL__ !== "undefined" ? __MILOCODE_UPDATE_BASE_URL__ : "";
+export const MILOCODE_UPDATE_PUBLIC_KEYS_JSON: string =
+  typeof __MILOCODE_UPDATE_PUBLIC_KEYS_JSON__ !== "undefined"
+    ? __MILOCODE_UPDATE_PUBLIC_KEYS_JSON__
+    : "{}";
+export const MILOCODE_SPARKLE_PUBLIC_KEY: string =
+  typeof __MILOCODE_SPARKLE_PUBLIC_KEY__ !== "undefined" ? __MILOCODE_SPARKLE_PUBLIC_KEY__ : "";
 
 /** 将本地运行态与编译期 ZCODE_ENV 映射为 ARMS 控制台识别的上报环境标签 */
 export function mapZCodeEnvToArmsRumEnv(runtimeEnv: ZCodeRuntimeEnv): ArmsRumEnv {

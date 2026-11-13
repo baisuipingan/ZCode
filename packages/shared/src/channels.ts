@@ -669,6 +669,8 @@ export const HostMessageTypes = {
   BrowserExecuteResult: "browser-execute-result",
   /** main → host：本地视频 canonical path 授权结果 */
   LocalMediaPreviewPathAuthorizeResult: "local-media-preview-path-authorize-result",
+  /** Main → trusted local Host：仅用于品牌账号私有存储的 OS 加密结果。 */
+  BrandAccountCipherResult: "brand-account-cipher-result",
   /** main → host：插件 UI 沙箱登记结果（PluginSandboxRegisterResultPayload） */
   PluginSandboxRegisterResult: "plugin-sandbox-register-result",
   /** Main → Host：全局前台 ZCode 窗口派生的 producer focus fact。 */
@@ -778,6 +780,8 @@ export const HostResponseTypes = {
   BrowserExecuteRequest: "browser-execute-request",
   /** host → main：请求授权 Agent 已精确校验的本地视频路径 */
   LocalMediaPreviewPathAuthorizeRequest: "local-media-preview-path-authorize-request",
+  /** trusted local Host → Main：品牌账号私有存储的 OS 加解密；不属于 Renderer IPC。 */
+  BrandAccountCipherRequest: "brand-account-cipher-request",
   /** host → main：登记已校验的插件 UI HTML 与 CSP，换取 sandbox 句柄（PluginSandboxRegisterRequestPayload） */
   PluginSandboxRegisterRequest: "plugin-sandbox-register-request",
   /** host → main：RPC 网络遥测批次（channel.command 成功率/耗时） */

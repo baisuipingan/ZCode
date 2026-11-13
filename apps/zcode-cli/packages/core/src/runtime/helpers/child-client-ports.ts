@@ -18,6 +18,11 @@ import type { ProviderRuntimeHeadersPort } from "../types.js";
 import type { SubagentInteractionOriginContext } from "../../subagent/interaction-origin.js";
 import { createSubagentInteractionBroker } from "./subagent-interaction-broker.js";
 
+/** 内存执行归属；有 scope、无 binding 表示明确的普通 API，不能向当前账户补签。 */
+export interface RuntimeBillingScope {
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
+}
+
 /** 一个 runtime 面向协议客户端的端口集合。 */
 export interface ClientFacingPorts {
   permissionBroker?: PermissionBrokerPort;
@@ -41,7 +46,10 @@ export type ChildClientPortsContext = Omit<SubagentInteractionOriginContext, "pa
  */
 export function deriveChildClientPorts(
   parent: ClientFacingPorts,
-  context: ChildClientPortsContext & { parentSessionId: SessionId },
+  context: ChildClientPortsContext & {
+    parentSessionId: SessionId;
+    billingBinding?: import("@zcode/shared").ManagedBillingBinding;
+  },
 ): ClientFacingPorts {
   return {
     ...(parent.permissionBroker === undefined
@@ -53,6 +61,9 @@ export function deriveChildClientPorts(
           providerRuntimeHeadersPort: rerouteProviderRuntimeHeadersPort(
             parent.providerRuntimeHeadersPort,
             context.parentSessionId,
+            "billingBinding" in context
+              ? context.billingBinding
+              : parent.providerRuntimeHeadersPort.billingBinding,
           ),
         }),
   };
@@ -66,13 +77,23 @@ export function deriveChildClientPorts(
 function rerouteProviderRuntimeHeadersPort(
   parentPort: ProviderRuntimeHeadersPort,
   parentSessionId: SessionId,
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding,
 ): ProviderRuntimeHeadersPort {
   return {
+    // 调用方已完成归属解析；显式无绑定不能回退到父端口（它可能属于稍后的另一轮）。
+    billingBinding: billingBinding ? structuredClone(billingBinding) : undefined,
     shouldRefreshBeforeModelRequest(input) {
       return parentPort.shouldRefreshBeforeModelRequest?.(input) ?? true;
     },
     refreshBeforeModelRequest(input) {
       return parentPort.refreshBeforeModelRequest({ ...input, sessionId: parentSessionId });
     },
+    ...(parentPort.reportManagedOutcome
+      ? {
+          reportManagedOutcome(input) {
+            parentPort.reportManagedOutcome?.({ ...input, sessionId: parentSessionId });
+          },
+        }
+      : {}),
   };
 }

@@ -41,6 +41,11 @@ import { modelExecutionSchema } from "../model-execution.js";
 export type { ModelExecutionSelectionFallback } from "../model-execution.js";
 export * from "../off-peak-execution.js";
 import { modelSelectionSchema } from "../model-selection.js";
+import {
+  managedProviderPolicySchema,
+  managedProviderAccessSchema,
+  managedInferenceOutcomeSchema,
+} from "../model-selection.js";
 import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
 import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import { errorAttributionSchema } from "../zcode-protocol-v4/snapshot.js";
@@ -476,6 +481,7 @@ export type ZCodeProtocolMessage = z.infer<typeof zcodeProtocolMessageSchema>;
 export const zcodeProtocolNotifications = {
   storageStartup: "startup/storageState",
   providerRuntimeHeadersCancelled: "interaction/providerRuntimeHeadersCancelled",
+  managedInferenceOutcome: "interaction/managedInferenceOutcome",
   mcpTelemetry: "process/mcpTelemetry",
   mcpResourceSamples: "process/mcpResourceSamples",
   toolExecResource: "process/toolExecResource",
@@ -2590,6 +2596,7 @@ export type ZCodeProviderTestModelConnectivityResult = z.infer<
 
 export const zcodeProviderUpdateAccountConfigParamsSchema = z
   .object({
+    managedPolicy: managedProviderPolicySchema.optional(),
     revision: nonEmptyString,
     basedOnZCodeBuiltinRevision: nonEmptyString,
     // Provider Config 的字段校验由 @zcode/provider 负责；协议层只约束可传输信封。
@@ -2614,6 +2621,8 @@ export const zcodeProviderUpdateAccountConfigResultSchema = z
   .object({
     // 收到账号结果不代表配套 Built-in 已到达；应用版本只能读取 Registry 快照。
     receivedRevision: nonEmptyString,
+    appliedRevision: nonEmptyString.optional(),
+    managedReady: z.boolean().optional(),
     providerCount: z.number().int().nonnegative(),
     status: z.enum(["received", "unchanged"]),
   })
@@ -2851,6 +2860,9 @@ export const zcodeProviderRuntimeHeadersRequestParamsSchema = z
     modelSelection: modelSelectionSchema,
     providerId: nonEmptyString,
     accountAccess: zcodeProviderAccountAccessSchema.optional(),
+    managedAccess: managedProviderAccessSchema.optional(),
+    phase: z.enum(["admission", "attempt"]).optional(),
+    modelConfigRevision: nonEmptyString.optional(),
     expectedAccountScope: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -2861,7 +2873,10 @@ export const zcodeProviderRuntimeHeadersRequestParamsSchema = z
       .optional(),
     reason: zcodeProviderRuntimeHeadersRequestReasonSchema,
   })
-  .strict();
+  .strict()
+  .refine((value) => !(value.accountAccess && value.managedAccess), {
+    message: "Account and managed access are mutually exclusive",
+  });
 export type ZCodeProviderRuntimeHeadersRequestParams = z.infer<
   typeof zcodeProviderRuntimeHeadersRequestParamsSchema
 >;
@@ -2877,6 +2892,15 @@ export const zcodeProviderRuntimeHeadersCancelledSchema = z
 export type ZCodeProviderRuntimeHeadersCancelled = z.infer<
   typeof zcodeProviderRuntimeHeadersCancelledSchema
 >;
+
+/** 无秘密的实时私有反馈，不转为session事件或手机可重放帧。 */
+export const zcodeManagedInferenceOutcomeSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    workspace: zcodeWorkspaceRefSchema,
+    outcome: managedInferenceOutcomeSchema,
+  })
+  .strict();
 
 // 标准 JSON-RPC error 保留旧版 schema 兼容，不向严格校验的 response 增加字段。
 export const ZCODE_PROVIDER_CONFIG_NETWORK_ERROR = -32032;

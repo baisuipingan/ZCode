@@ -51,6 +51,10 @@ export function isModelRequestSessionFeature(value: unknown): value is ModelRequ
  * Runtime 只在统一模型调用边界设置，Adapter 在同一异步调用链内读取。
  */
 export interface ModelInvocationContext {
+  /** 实时私有反馈，不进入任务历史或UI；失败不能改变模型请求的结果或重试次数。 */
+  reportManagedOutcome?: (
+    outcome: import("@zcode/shared").ManagedInferenceOutcome,
+  ) => void | Promise<void>;
   metadata?: Record<string, unknown>;
   modelCall?: ModelApiCallObservation;
   modelRequestSessionType?: ModelRequestSessionType;
@@ -70,6 +74,8 @@ export interface ModelInvocationContext {
   preserveProviderStreamBoundaries?: boolean;
   refreshRuntimeHeadersBeforeAttempt?: (input: {
     accountAccess?: ZCodeProviderAccountAccess;
+    managedAccess?: import("@zcode/shared").ManagedProviderAccess;
+    modelConfigRevision?: string;
     expectedAccountScope?: string;
     rejectedProjectTokenFingerprint?: string;
     attempt: number;
@@ -106,6 +112,7 @@ export interface ModelRequestAuthSource {
 }
 
 export interface ModelRequestDependencies {
+  billingBinding?: import("@zcode/shared").ManagedBillingBinding;
   /** 属性存在表示当前 Model 必须取得请求级鉴权；Source 缺失同样 fail-closed。 */
   requestAuth?: {
     source?: ModelRequestAuthSource;

@@ -12,21 +12,92 @@ import {
   ModelConfig,
   ModelConfigRules,
   type ZhipuAccountAccessConfig,
+  ManagedProviderAccessConfig,
+  ProviderApiConfig,
   type ModelId,
   ProviderConfig,
   type ProviderConfigRule,
   ProviderConfigMap,
-  type ProviderTemplateMap,
+  ProviderTemplateMap,
   type ProviderId,
 } from "./config/index.js";
 import { resolveOwnedOrder } from "./owned-order.js";
 import type { AccountProviderStates } from "./account-provider-state.js";
+import {
+  managedProviderPolicySchema,
+  type ManagedProviderPolicy,
+} from "@zcode/shared/model-selection";
+
+/** 品牌策略是受信 Account source 的独立完整事实，绝不与 Personal/官方配置叠加。 */
+export function resolveManagedProviderPolicy(
+  input: ManagedProviderPolicy,
+): ProviderConfigResolution {
+  const policy = managedProviderPolicySchema.parse(input);
+  const providers =
+    policy.state === "ready"
+      ? new ProviderConfigMap([
+          [
+            policy.providerId,
+            new ProviderConfig({
+              group: "standard-personal",
+              access: new ManagedProviderAccessConfig({
+                credentialRef: policy.credentialRef,
+                billingBinding: policy.billingBinding,
+              }),
+              api: new ProviderApiConfig({ type: "openai-responses", baseUrl: policy.baseUrl }),
+              builtinModelIds: policy.models.map((model) => model.modelId),
+              visibility: "visible",
+            }),
+          ],
+        ])
+      : ProviderConfigMap.empty();
+  const modelRules =
+    policy.state === "ready"
+      ? new ModelConfigRules(
+          policy.models.map((model) => ({
+            type: "provider-model",
+            providerId: policy.providerId,
+            modelId: model.modelId,
+            config: ModelConfig.fromData(model.modelConfig),
+          })),
+        )
+      : ModelConfigRules.empty();
+  const resolution = new ProviderConfigResolver().resolve({
+    zcodeBuiltinProviders: providers,
+    zcodeBuiltinProviderTemplates: new ProviderTemplateMap(),
+    personalProviders: ProviderConfigMap.empty(),
+    zcodeBuiltinModelRules: modelRules,
+    personalModels: ModelConfigRules.empty(),
+    accountProviders: ProviderConfigMap.empty(),
+  });
+  if (policy.state !== "ready") return resolution;
+  const names = new Map(policy.models.map((model) => [model.modelId, model.displayName]));
+  return Object.freeze({
+    ...resolution,
+    registryProviders: Object.freeze(
+      resolution.registryProviders.map((provider) =>
+        Object.freeze({
+          ...provider,
+          models: Object.freeze(
+            provider.models.map((model) =>
+              Object.freeze({
+                ...model,
+                ...(names.get(model.modelId) ? { displayName: names.get(model.modelId) } : {}),
+              }),
+            ),
+          ),
+        }),
+      ),
+    ),
+  });
+}
 
 export type RegistryZhipuAccountAccessConfig = ZhipuAccountAccessConfig &
   z.infer<typeof completeZhipuAccountAccessDataSchema>;
 
 export type RegistryProviderAccessConfig =
   | (ApiKeyAccessConfig & z.infer<typeof completeApiKeyAccessDataSchema>)
+  | ManagedProviderAccessConfig
   | RegistryZhipuAccountAccessConfig;
 
 export type RegistryProviderConfig = ProviderConfig &
@@ -43,20 +114,22 @@ export function serializeRegistryProviderConfig(
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
     access:
-      config.access.type !== "zhipu-account"
-        ? {
-            type: config.access.type,
-            apiKey: config.access.apiKey,
-            ...(config.access.apiKeyManagementUrl === undefined
-              ? {}
-              : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
-          }
-        : {
-            type: config.access.type,
-            accountType: config.access.accountType,
-            mode: config.access.mode,
-            entitled: config.access.entitled,
-          },
+      config.access.type === "brand-managed"
+        ? config.access.toJSON()
+        : config.access.type !== "zhipu-account"
+          ? {
+              type: config.access.type,
+              apiKey: config.access.apiKey,
+              ...(config.access.apiKeyManagementUrl === undefined
+                ? {}
+                : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
+            }
+          : {
+              type: config.access.type,
+              accountType: config.access.accountType,
+              mode: config.access.mode,
+              entitled: config.access.entitled,
+            },
     api: {
       type: config.api.type,
       baseUrl: config.api.baseUrl,
@@ -162,6 +235,7 @@ export interface ResolvedProvider extends Pick<ProviderConfigRule, "templateId" 
 
 export interface ProviderModel {
   readonly modelId: ModelId;
+  readonly displayName?: string;
   readonly config: RegistryModelConfig;
 }
 

@@ -39,6 +39,7 @@ import {
   ServiceCollection,
   IBotsService,
   ICredentialService,
+  IBrandAccountService,
   IFileService,
   IClientConfigService,
   IMediaPreviewService,
@@ -68,6 +69,7 @@ import {
 } from "@zcode/services";
 import {
   createLocalServices,
+  createBrandAccountService,
   createProjectWorkspaceNavigation,
   createRemoteProjectConnectionAdmission,
   remoteProjectHostIdForProfile,
@@ -101,7 +103,9 @@ import {
 } from "./offPeakDispatchPlan.js";
 import {
   HostMessageTypes,
+  ZCODE_VERSION,
   HostResponseTypes,
+  hostBrandAccountCipherRequestResponseSchema,
   formatLogPrefix,
   formatZCodeHostProcessName,
   formatZodError,
@@ -256,6 +260,67 @@ type RemoteAssetDirs = import("./windowRemoteConnectionRegistry.js").WindowRemot
 
 const { parentPort } = process;
 const hostNetworkCapture = createHostNetworkCapture(parentPort);
+
+const pendingBrandAccountCipherRequests = new Map<
+  string,
+  {
+    resolve: (value: string) => void;
+    reject: (error: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }
+>();
+let brandAccountCipherDisposed = false;
+let disposeBrandAccountService: (() => void) | undefined;
+let assertBrandInferenceConfigured: (() => Promise<void>) | undefined;
+
+function brandAccountStorageError(code = "secure_storage_failed"): Error {
+  return Object.assign(new Error("Secure account storage is unavailable"), { code });
+}
+
+function requestBrandAccountCipher(
+  operation: "encrypt" | "decrypt",
+  value: string,
+): Promise<string> {
+  if (!parentPort || brandAccountCipherDisposed || pendingBrandAccountCipherRequests.size >= 32) {
+    return Promise.reject(brandAccountStorageError());
+  }
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingBrandAccountCipherRequests.delete(requestId);
+      reject(brandAccountStorageError());
+    }, 10_000);
+    timeout.unref();
+    pendingBrandAccountCipherRequests.set(requestId, { resolve, reject, timeout });
+    try {
+      parentPort.postMessage(
+        hostBrandAccountCipherRequestResponseSchema.parse({
+          type: HostResponseTypes.BrandAccountCipherRequest,
+          requestId,
+          operation,
+          value,
+        }),
+      );
+    } catch {
+      clearTimeout(timeout);
+      pendingBrandAccountCipherRequests.delete(requestId);
+      reject(brandAccountStorageError());
+    }
+  });
+}
+
+function disposeBrandAccount(): void {
+  // 先撤销请求身份，再释放服务；迟到 OS 回包与网络响应不能复活已关窗口。
+  brandAccountCipherDisposed = true;
+  disposeBrandAccountService?.();
+  disposeBrandAccountService = undefined;
+  assertBrandInferenceConfigured = undefined;
+  for (const pending of pendingBrandAccountCipherRequests.values()) {
+    clearTimeout(pending.timeout);
+    pending.reject(brandAccountStorageError());
+  }
+  pendingBrandAccountCipherRequests.clear();
+}
 
 // 进程检索体验优化：host 由 utilityProcess 拉起时外壳仍是 Electron Helper，
 // 这里根据 main 传入的窗口 label 补一层稳定的 zcode-* title，方便系统进程列表过滤。
@@ -640,7 +705,7 @@ async function dispatchOffPeakRun(request: OffPeakRunDispatchRequest): Promise<{
   const zcodeTaskService = activeServices?.getOptional(IZCodeTaskService);
   const zcodeAgentService = activeServices?.getOptional(IZCodeAgentService);
   if (!zcodeTaskService || !zcodeAgentService) {
-    throw new Error("ZCode task service is not initialized.");
+    throw new Error("MiloCode task service is not initialized.");
   }
   const runtime = await ensureOffPeakRuntime();
   if (!runtime) {
@@ -1020,7 +1085,7 @@ async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
   const targetServices = resolveAutomationTargetServices(request);
   const zcodeTaskService = targetServices.getOptional(IZCodeTaskService);
   if (!zcodeTaskService) {
-    throw new Error("ZCode task service is not initialized.");
+    throw new Error("MiloCode task service is not initialized.");
   }
   const modelSelectionService = targetServices.getOptional(IModelSelectionService);
   if (!modelSelectionService) {
@@ -1525,12 +1590,12 @@ function createReportingRemoteZCodeTaskService<T extends object>(
     const onDynamicTaskReady = Reflect.get(target, "onDynamicTaskReady");
     if (typeof onDynamicTaskReady !== "function") {
       workspaceTaskTracker.finish(taskId, meta);
-      throw new Error("remote ZCode task service does not expose onDynamicTaskReady");
+      throw new Error("remote MiloCode task service does not expose onDynamicTaskReady");
     }
     const subscribe = onDynamicTaskReady.call(target, taskId);
     if (typeof subscribe !== "function") {
       workspaceTaskTracker.finish(taskId, meta);
-      throw new Error("remote ZCode task ready event is not subscribable");
+      throw new Error("remote MiloCode task ready event is not subscribable");
     }
     workspaceProxyState.trackTaskReady(
       taskId,
@@ -2759,6 +2824,7 @@ function exposeServicesOnMessagePort(
     clientMode,
     attachmentScope,
     windowServices: activeServices ?? undefined,
+    assertBrandInferenceConfigured,
     ...(isWebRemoteAttachment
       ? { decorateWindowProjectService: webRemoteProjectTreeActivity.decorate }
       : {}),
@@ -2892,6 +2958,7 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     logger.info(`disposing host resources, reason=${reason}`);
 
     pluginSandboxRegistrationBridge.dispose();
+    disposeBrandAccount();
     stopHostNetworkTelemetry();
     hostNetworkCapture.setCaptureId(null);
     hostSelfResourceTelemetry.stop();
@@ -2977,6 +3044,7 @@ function disposeHostResourcesBestEffort(reason: string): void {
 
   logger.info(`disposing host resources, reason=${reason}`);
   pluginSandboxRegistrationBridge.dispose();
+  disposeBrandAccount();
   stopHostNetworkTelemetry();
   hostNetworkCapture.setCaptureId(null);
   disposeLocalResourceTelemetry();
@@ -3224,6 +3292,16 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     return;
   }
 
+  if (msg.type === HostMessageTypes.BrandAccountCipherResult) {
+    const pending = pendingBrandAccountCipherRequests.get(msg.requestId);
+    if (!pending) return;
+    pendingBrandAccountCipherRequests.delete(msg.requestId);
+    clearTimeout(pending.timeout);
+    if (msg.result.ok) pending.resolve(msg.result.value);
+    else pending.reject(brandAccountStorageError(msg.result.errorCode));
+    return;
+  }
+
   if (msg.type === HostMessageTypes.PluginSandboxRegisterResult) {
     pluginSandboxRegistrationBridge.accept(msg);
     return;
@@ -3327,7 +3405,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
       parentPort.postMessage({
         type: HostResponseTypes.SessionMessageDeliverResult,
         result: {
-          error: "ZCode task service is not initialized.",
+          error: "MiloCode task service is not initialized.",
           messageId: msg.request.messageId,
           requestId: msg.request.requestId,
           sessionId: msg.request.fromSessionId,
@@ -3873,11 +3951,26 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             caCertPath: settings.httpProxyCaCertPath,
           };
         });
+        // 品牌账户先于Agent服务建立；私有resolver通过依赖注入进入模型请求边界。
+        const brandAccount = createBrandAccountService({
+          baseUrl: msg.brandAccountBaseUrl ?? "https://milorouter.com",
+          // Main 的 userData 与 OS 加密身份一致；不读共享业务根中的其他身份旧凭据。
+          filePath: msg.brandAccountSessionFilePath,
+          fetch: hostApiNetworkTransport.fetch,
+          encrypt: (value) => requestBrandAccountCipher("encrypt", value),
+          decrypt: (value) => requestBrandAccountCipher("decrypt", value),
+          ...(process.platform === "win32" || process.platform === "darwin"
+            ? { managedInference: { clientVersion: ZCODE_VERSION, platform: process.platform } }
+            : {}),
+        });
+        disposeBrandAccountService = brandAccount.dispose;
+        assertBrandInferenceConfigured = () => brandAccount.inference.assertConfigured();
         const services = await initializeHostApiNetworkTransportOwner({
           transport: hostApiNetworkTransport,
           log: (message, details) => logger.warn(message, details),
           establishOwner: () => {
             const initializedServices = createLocalServices({
+              brandManagedInference: brandAccount.inference,
               reportPluginTelemetryEvent: (event) => {
                 parentPort?.postMessage({
                   type: HostResponseTypes.PluginTelemetry,
@@ -4198,6 +4291,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           },
         );
         services.register(ISourceServerManagementService, sourceServerManagementService);
+        // 账号业务由窗口 Host 持有；共享文件只保存 Main safeStorage 加密后的独立记录。
+        // 服务不注册到远程 workspace / source-settings 集合，手机 allowlist 也不放行。
+        services.register(IBrandAccountService, brandAccount.service);
         // 数据同步页的设备同步状态只属于本机 Host：不进入远程 workspace RPC 合同、
         // source-settings 服务集合，也不在手机 attachment 白名单中。
         services.register(

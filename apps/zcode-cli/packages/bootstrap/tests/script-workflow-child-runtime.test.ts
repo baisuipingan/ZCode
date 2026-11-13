@@ -523,6 +523,12 @@ describe("script workflow child runtime — 对外交互端口由父 runtime 铸
       // 主 runtime 的端口：每次调用报自己的 sessionId；child 拿到的是父 runtime 派生的实例，
       // 派生层把 sessionId 改写成父会话（core 的 child-client-ports.ts）。
       providerRuntimeHeadersPort: {
+        billingBinding: {
+          origin: "https://example.invalid",
+          accountRef: "current-B",
+          accountEpoch: 2,
+          policyRevision: "current",
+        },
         shouldRefreshBeforeModelRequest: () => true,
         async refreshBeforeModelRequest(input) {
           refreshes.push({ providerId: input.providerId, routedSessionId: input.sessionId });
@@ -557,7 +563,9 @@ describe("script workflow child runtime — 对外交互端口由父 runtime 铸
     },
   });
 
-  async function makeActorRuntime(): Promise<AgentRuntime> {
+  async function makeActorRuntime(
+    billingScope?: Parameters<typeof createScriptWorkflowAgentRuntime>[0]["billingScope"],
+  ): Promise<AgentRuntime> {
     const deps = {
       agentTelemetry: createModelTelemetry().agentExecution,
       appOptions: { env: process.env },
@@ -584,6 +592,7 @@ describe("script workflow child runtime — 对外交互端口由父 runtime 铸
       workingDirectory: tempRoot,
     } as unknown as ScriptWorkflowAgentRuntimeDeps;
     return createScriptWorkflowAgentRuntime({
+      billingScope,
       childSessionId: actorSessionId,
       deps,
       request: { opts: { agentType: "reviewer", label: "复核员" }, prompt: "go" } as never,
@@ -598,6 +607,26 @@ describe("script workflow child runtime — 对外交互端口由父 runtime 铸
     expect(refreshes.length).toBeGreaterThan(0);
     // 端口入参里的 sessionId 必须是父会话：桌面只订阅父 task 的会话，带子会话去问没人应答。
     expect(refreshes.every((entry) => entry.routedSessionId === parentSessionId)).toBe(true);
+  });
+
+  it("workflow 工厂把冻结 A 传至真实 actor runtime，不借父端口当前 B", async () => {
+    const scope = {
+      billingBinding: {
+        origin: "https://example.invalid",
+        accountRef: "original-A",
+        accountEpoch: 1,
+        policyRevision: "original",
+      },
+    };
+    const expected = structuredClone(scope);
+    const actor = await makeActorRuntime(scope);
+    scope.billingBinding.accountRef = "mutated";
+    expect(parentRuntime.captureBillingScope()?.billingBinding?.accountRef).toBe("current-B");
+    expect(actor.captureBillingScope()).toEqual(expected);
+    await actor.close();
+    const ordinary = await makeActorRuntime({});
+    expect(ordinary.captureBillingScope()).toBeUndefined();
+    await ordinary.close();
   });
 
   it("父 runtime 铸造的 permission broker 带父会话身份与子代理 origin", async () => {

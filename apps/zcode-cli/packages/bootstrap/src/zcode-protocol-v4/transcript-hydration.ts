@@ -433,6 +433,7 @@ function inputIntentOfMessage(message: MessageWithParts): TurnInputIntentMetadat
       text: value.text,
       genUiContext: value.genUiContext,
       ...(value.modelSelection ? { modelSelection: value.modelSelection } : {}),
+      ...(value.billingBinding ? { billingBinding: value.billingBinding } : {}),
       ...(value.mode ? { mode: value.mode } : {}),
       ...(value.planEnabled !== undefined ? { planEnabled: value.planEnabled } : {}),
       admissionSeq: value.order.admissionSeq,

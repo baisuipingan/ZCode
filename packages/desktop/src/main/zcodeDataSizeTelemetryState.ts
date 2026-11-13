@@ -18,7 +18,7 @@ export async function readZCodeDataSizeTelemetryState(
     const state: ZCodeDataSizeTelemetryState = {};
     if (record.lastReportedAt !== undefined) {
       if (typeof record.lastReportedAt !== "number" || !Number.isFinite(record.lastReportedAt)) {
-        throw new TypeError("Invalid lastReportedAt in ZCode data size telemetry state");
+        throw new TypeError("Invalid lastReportedAt in MiloCode data size telemetry state");
       }
       state.lastReportedAt = record.lastReportedAt;
     }
@@ -27,7 +27,7 @@ export async function readZCodeDataSizeTelemetryState(
         typeof record.reportReservedAt !== "number" ||
         !Number.isFinite(record.reportReservedAt)
       ) {
-        throw new TypeError("Invalid reportReservedAt in ZCode data size telemetry state");
+        throw new TypeError("Invalid reportReservedAt in MiloCode data size telemetry state");
       }
       state.reportReservedAt = record.reportReservedAt;
     }

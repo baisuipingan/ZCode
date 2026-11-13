@@ -19,6 +19,7 @@ import {
   formatZCodeHostProcessName,
   HostMessageTypes,
   hostResponseMessageSchema,
+  hostBrandAccountCipherResultMessageSchema,
   HostResponseTypes,
   InternalChannels,
   LAUNCH_MARKS_QUERY_KEY,
@@ -37,6 +38,7 @@ import {
   BrowserWindow,
   utilityProcess as electronUtilityProcess,
   MessageChannelMain,
+  safeStorage,
 } from "electron";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -83,6 +85,9 @@ export interface HostInitMessage {
   deliveryKind?: TaskRealtimeHostDeliveryKind;
   deviceMid?: string;
   feedbackApiBase?: string;
+  brandAccountBaseUrl?: string;
+  /** 由 spawnHostProcess 按 Main userData 覆盖，调用方不得推断 OS 凭据作用域。 */
+  brandAccountSessionFilePath?: string;
   workspacePath?: string;
   workspaceIdentity?: string;
   agentWarmupTargets?: Array<{
@@ -114,8 +119,43 @@ export interface SpawnHostProcessOptions {
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
 const disposingHostProcesses = new Set<ElectronUtilityProcess>();
 
+function resolveBrandAccountBaseUrl(): string {
+  const defaultBaseUrl = "https://milorouter.com";
+  // 生产包不能继承开发环境的账号服务地址，防止登录凭据被意外发送到其他站点。
+  const override = !app.isPackaged && process.env["MILOROUTER_ACCOUNT_BASE_URL"]?.trim();
+  if (!override) return defaultBaseUrl;
+  try {
+    const url = new URL(override);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/"
+    ) {
+      return defaultBaseUrl;
+    }
+    return url.origin;
+  } catch {
+    return defaultBaseUrl;
+  }
+}
+
 export function listDisposingHostProcesses(): ElectronUtilityProcess[] {
   return Array.from(disposingHostProcesses);
+}
+
+/** 更新准入只能信任真实 exit；普通退出超时、kill() 或移出注册表均不是退出证明。 */
+export function assertHostProcessesExitedForUpdate(
+  children: Iterable<ElectronUtilityProcess>,
+): void {
+  for (const child of children) {
+    if (!exitedHostProcesses.has(child)) {
+      throw new Error("MiloCode update shutdown blocked: Host has not emitted exit");
+    }
+  }
 }
 
 export function loadWindow(
@@ -312,6 +352,57 @@ export function spawnHostProcess(
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
     if (!result.success) {
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.BrandAccountCipherRequest) {
+      // 账号明文仅在已 fork 的可信 Host 与 Main 之间流动；不注册 Renderer IPC 或通用解密服务。
+      if (exitedHostProcesses.has(child) || disposingHostProcesses.has(child)) return;
+      const { requestId, operation, value } = result.data;
+      let cipherResult:
+        | { ok: true; value: string }
+        | { ok: false; errorCode: "secure_storage_unavailable" | "secure_storage_failed" };
+      try {
+        if (
+          !safeStorage.isEncryptionAvailable() ||
+          (process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text")
+        ) {
+          cipherResult = { ok: false, errorCode: "secure_storage_unavailable" };
+        } else if (operation === "encrypt") {
+          // 明文按 UTF-8 字节限额，密文/base64 另留空间，确保已保存的记录仍可恢复。
+          if (Buffer.byteLength(value, "utf8") > 262_144) throw new Error();
+          cipherResult = {
+            ok: true,
+            value: `os:v1:${safeStorage.encryptString(`milorouter-account:v1:${value}`).toString("base64")}`,
+          };
+        } else {
+          // 限定本桥用途，避免把其它 safeStorage 密文当作账号数据解密并返回。
+          const encoded = value.startsWith("os:v1:") ? value.slice(6) : "";
+          const encrypted = Buffer.from(encoded, "base64");
+          if (!encoded || encrypted.toString("base64") !== encoded) throw new Error();
+          const decrypted = safeStorage.decryptString(encrypted);
+          const prefix = "milorouter-account:v1:";
+          if (!decrypted.startsWith(prefix)) throw new Error();
+          cipherResult = { ok: true, value: decrypted.slice(prefix.length) };
+        }
+        const reply = hostBrandAccountCipherResultMessageSchema.parse({
+          type: HostMessageTypes.BrandAccountCipherResult,
+          requestId,
+          result: cipherResult,
+        });
+        child.postMessage(reply);
+      } catch {
+        // OS 异常、非法密文和窗口销毁不能把明文或原始异常带入日志/RPC。
+        try {
+          child.postMessage({
+            type: HostMessageTypes.BrandAccountCipherResult,
+            requestId,
+            result: { ok: false, errorCode: "secure_storage_failed" },
+          });
+        } catch {
+          // Host 已退出，调用方的生命周期 fence 会拒绝 pending。
+        }
+      }
       return;
     }
 
@@ -647,11 +738,19 @@ export function spawnHostProcess(
   const hostInitMessage: HostInitMessage = shouldAttachRealtimeHost
     ? {
         ...initMessage,
+        brandAccountBaseUrl: resolveBrandAccountBaseUrl(),
+        // 旧业务根会混入开发版/旧身份密文，导致新登录也被不可读旧记录阻断。
+        brandAccountSessionFilePath: join(app.getPath("userData"), "brand-account", "session.json"),
         databaseStartupId: databaseStartupRelay.startupId,
         hostId,
         deliveryKind: options?.taskRealtime?.deliveryKind,
       }
-    : { ...initMessage, databaseStartupId: databaseStartupRelay.startupId };
+    : {
+        ...initMessage,
+        brandAccountBaseUrl: resolveBrandAccountBaseUrl(),
+        brandAccountSessionFilePath: join(app.getPath("userData"), "brand-account", "session.json"),
+        databaseStartupId: databaseStartupRelay.startupId,
+      };
 
   if (options?.attachInitialServicePort === false) {
     child.postMessage(hostInitMessage);

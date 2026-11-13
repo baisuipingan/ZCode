@@ -12,6 +12,37 @@ import { maybeStartSessionTitleGeneration } from "../src/runtime/methods/session
 import { retainTitleModelContext } from "../src/runtime/methods/title-generation-sidecar.js";
 
 describe("闲时默认标题请求", () => {
+  it("品牌标题冻结原运行归属，不受随后换号或主轮收口影响", async () => {
+    const runtime = createTestAgentRuntime(
+      createSessionId("managed-title-binding"),
+      {
+        modelSelection: createTestModelSelection("managed/model"),
+        titleGeneration: {},
+        workingDirectory: "/workspace",
+      },
+      { eventStore: createTestSessionEventStore() },
+    );
+    const internal = runtime as unknown as AgentRuntimeInternal;
+    const billingBinding = {
+      origin: "https://account.example",
+      accountRef: "user:A",
+      accountEpoch: 1,
+      policyRevision: "A",
+    };
+    internal.activeForegroundExecution = {
+      billingBinding,
+      controller: new AbortController(),
+      disposeParentAbort() {},
+      foregroundExecutionId: "run:A",
+      preserveQueueAutoDrainOnCancel: false,
+    };
+    const retained = retainTitleModelContext(internal);
+    internal.activeForegroundExecution = undefined;
+    billingBinding.accountRef = "user:B";
+    expect(retained.requestDependencies?.billingBinding?.accountRef).toBe("user:A");
+    retained.release();
+    await runtime.close();
+  });
   it("标题读库尚未结束时主轮不能收口，早退也释放租约；独立调用与接管不借用闲时票", async () => {
     const events: OffPeakLifecycleEvent[] = [];
     const gate = Promise.withResolvers<null>();

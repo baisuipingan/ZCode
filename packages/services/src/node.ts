@@ -26,7 +26,18 @@ import { createGenUiService } from "./gen-ui/node.js";
 // import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- host process 服务注册和启动装配需要集中维护，拆散后会更难追踪依赖注入顺序 */
 // Node.js service implementations — NOT safe to import in browser code
+export {
+  createBrandAccountService,
+  type CreateBrandAccountServiceOptions,
+  type BrandManagedInferenceHost,
+} from "./brand-account/index.js";
 import { randomBytes } from "node:crypto";
+import {
+  createFailClosedAccountProviderConfigSnapshot,
+  type AccountProviderConfigSnapshot,
+  type ProviderSource,
+} from "@zcode/provider";
+import type { BrandManagedInferenceHost } from "./brand-account/index.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1189,6 +1200,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *        用于 BroadcastService 跨窗口中转。传 null 则广播为空操作。
  */
 export function createLocalServices(options: {
+  /** Desktop本机私有推理owner；不注册到通用RPC/远端服务。 */
+  brandManagedInference?: BrandManagedInferenceHost;
   /** 已鉴权 Desktop stdio 连接提供的私有回查频道；不作为公共 service 暴露。 */
   topicResourceRelayChannel?: (request: unknown) => IChannel;
   parentPort?: Parameters<typeof createBroadcastService>[0];
@@ -1518,25 +1531,29 @@ export function createLocalServices(options: {
   const clientConfigPlatform = resolveClientConfigPlatform();
   const providerConfigRuntime = createProviderConfigRuntime({
     zcodeBuiltinFilePath: options.zcodeBuiltinProviderConfigFilePath,
-    zcodeBuiltinEnvironment: {
-      environmentConfigRoot: resolveAppConfigDir(),
-      platform: clientConfigPlatform,
-      appVersion: ZCODE_VERSION,
-      resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-      onRefreshResult: (event) => {
-        if (event.result === "updated")
-          providerConfigLog.info(undefined, "ZCode Built-in CDN 配置已更新", event);
-        else providerConfigLog.debug(undefined, "ZCode Built-in 刷新检查", event);
-      },
-      fetchRelease: (endpointOrigin, signal) =>
-        fetchZCodeBuiltinRemoteRelease({
-          apiClient,
-          endpointOrigin,
-          signal,
-          appVersion: ZCODE_VERSION,
-          platform: clientConfigPlatform,
-        }),
-    },
+    ...(!options.brandManagedInference
+      ? {
+          zcodeBuiltinEnvironment: {
+            environmentConfigRoot: resolveAppConfigDir(),
+            platform: clientConfigPlatform,
+            appVersion: ZCODE_VERSION,
+            resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
+            onRefreshResult: (event) => {
+              if (event.result === "updated")
+                providerConfigLog.info(undefined, "ZCode Built-in CDN 配置已更新", event);
+              else providerConfigLog.debug(undefined, "ZCode Built-in 刷新检查", event);
+            },
+            fetchRelease: (endpointOrigin, signal) =>
+              fetchZCodeBuiltinRemoteRelease({
+                apiClient,
+                endpointOrigin,
+                signal,
+                appVersion: ZCODE_VERSION,
+                platform: clientConfigPlatform,
+              }),
+          },
+        }
+      : {}),
     onZCodeBuiltinRefreshError: (error) => {
       providerConfigLog.warn(undefined, "ZCode Built-in Config 远端刷新失败", { error });
     },
@@ -1577,6 +1594,30 @@ export function createLocalServices(options: {
       credentialService,
     }),
   });
+  const effectiveAccountProviderSource: ProviderSource<AccountProviderConfigSnapshot> =
+    options.brandManagedInference
+      ? {
+          read: async () => {
+            // 品牌模式不读取官方账号权益/计划Key；Builtin仅作为既有结构版本，不形成执行候选。
+            const config = await providerConfigRuntime.configService.read();
+            const managedPolicy = options.brandManagedInference!.getPolicy();
+            const empty = createFailClosedAccountProviderConfigSnapshot(config);
+            return {
+              ...empty,
+              revision: JSON.stringify([empty.revision, managedPolicy.revision]),
+              managedPolicy,
+            };
+          },
+          onDidChange: (listener) => {
+            const stopConfig = providerConfigRuntime.configService.onDidChange(listener);
+            const stopManaged = options.brandManagedInference!.onDidChange(listener);
+            return () => {
+              stopConfig();
+              stopManaged();
+            };
+          },
+        }
+      : accountProviderConfigSource;
   const accountProviderRuntimeLog = createServiceLogger("account-provider-runtime");
   const modelSelectionConfiguredDefaultSource = new NodeModelSelectionConfigRepository({
     personalRepository: providerConfigRuntime.personalRepository,
@@ -1621,8 +1662,16 @@ export function createLocalServices(options: {
     | undefined;
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
-    accountSource: accountProviderConfigSource,
-    modelSelectionConfiguredDefaultSource,
+    accountSource: effectiveAccountProviderSource,
+    modelSelectionConfiguredDefaultSource: options.brandManagedInference
+      ? {
+          read: async () => {
+            const policy = options.brandManagedInference!.getPolicy();
+            return policy.state === "ready" ? policy.defaultSelection : undefined;
+          },
+          onDidChange: (listener) => options.brandManagedInference!.onDidChange(() => listener()),
+        }
+      : modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
     testConnectivity: createProviderSettingsConnectivityTester({
@@ -1716,7 +1765,7 @@ export function createLocalServices(options: {
   // 只要当前进程已经装配 Provider Runtime，就由该 Environment 自己的 Selection View
   // 决定执行就绪状态。Desktop-attached remote 也读取远端自己的 Config/Account Facts。
   const modelSelectionReadinessSource = providerRuntime.modelSelection;
-  const agentAccountProviderConfigSource = accountProviderConfigSource;
+  const agentAccountProviderConfigSource = effectiveAccountProviderSource;
   // ===== Computer Use Helper lifecycle 层（port 自 feat）=====
   // 约束：lifecycle coordinator 懒获取 + 代际 fence（dispose 仅来自显式 workspace 生命周期）；
   // 不创建定时健康探测；Helper restart 尽可能复用 host transport，既有 Agent 的 session、
@@ -2276,6 +2325,7 @@ export function createLocalServices(options: {
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),
     accountRequestAuthService,
+    brandManagedInference: options.brandManagedInference,
     readRequestVerificationConfig: () =>
       codingPlanSubscriptionService.getRequestVerificationConfig(),
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),

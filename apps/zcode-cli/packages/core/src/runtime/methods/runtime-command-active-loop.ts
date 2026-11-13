@@ -9,6 +9,7 @@ import {
 import { persistSubagentMessageCommand } from "./subagent-messages.js";
 import { isStaleBranchRuntimeCommand } from "./runtime-command-generation.js";
 import { createRuntimeUserEntry, type RuntimeMessageEntry } from "../../agent/message-history.js";
+import { sameManagedBillingBinding } from "@zcode/shared";
 
 export interface ActiveLoopRuntimeCommandDrainResult {
   backgroundSubagentResultConsumed: boolean;
@@ -28,6 +29,9 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
   let workflowResultConsumed = false;
   const messageIds: MessageId[] = [];
   const runtimeEntries: RuntimeMessageEntry[] = [];
+  const billingBinding =
+    this.activeForegroundExecution?.billingBinding ??
+    this.providerRuntimeHeadersPort?.billingBinding;
 
   for (const command of commands) {
     // 排队的 controlOnly 轮（GUI「配置」的设置轮）不进活动 turn，而且它之后入队的通知也不能被
@@ -36,6 +40,13 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
     // 后面的留给外层队列按序跑。
     if (command.mode === "control-only-turn") break;
     if (command.mode !== "task-notification" && command.mode !== "subagent-message") {
+      continue;
+    }
+    // 异账户/epoch 的迟到通知不能吸入当前付费轮，留队由原绑定独立执行并接受鉴权闸门校验。
+    if (
+      command.billingBinding !== billingBinding &&
+      !sameManagedBillingBinding(command.billingBinding, billingBinding)
+    ) {
       continue;
     }
     const removed = this.runtimeCommandQueue.removeById(command.id);

@@ -295,8 +295,12 @@ export class AiSdkModelExecution {
     const apiKey = this.resolveApiKey(providerConfig);
     // SDK 会合并 factory 默认 header；必须在这里去掉静态来源，才能保证缺失时真正省略。
     const headers = withoutContextOwnedModelHeaders(providerConfig.headers);
+    const baseTransport = this.resolveProviderTransport(providerId);
+    // 原因：只校验 bootstrap 端点不能约束 HTTP 跳转；受管 Key 不得跟随重定向离开受信入口。
+    const managedTransport: ProviderFetch = (input, init) =>
+      baseTransport(input, { ...init, redirect: "error" });
     const networkTransport = observeProviderFetch(
-      this.resolveProviderTransport(providerId),
+      providerConfig.access.type === "brand-managed" ? managedTransport : baseTransport,
       this.logger,
       providerId,
     );
@@ -403,7 +407,11 @@ function toAiSdkProviderConfig(
   config: RegistryProviderConfig,
 ): AiSdkProviderConfig {
   const common = {
-    ...(config.access.type !== "zhipu-account" && config.access.apiKey
+    // 原因：SDK 在构造基础句柄时会读取环境 Key；受管模型必须显式阻断环境回退。
+    // 此公开哨兵不授权请求，runner 在每个物理 attempt 前强制替换为 Host 动态材料。
+    ...(config.access.type === "brand-managed" ? { apiKey: "managed-auth-required" } : {}),
+    ...((config.access.type === "api-key" || config.access.type === "zhipu-coding-plan-api-key") &&
+    config.access.apiKey
       ? { apiKey: config.access.apiKey }
       : {}),
     baseURL: config.api.baseUrl,
@@ -430,7 +438,7 @@ function applyModelRequestAuth(
   const staticHeaders = withoutRequestVerificationHeaders(providerConfig.headers);
   // 账号动态身份头必须先清理静态认证头，避免 SDK 优先使用旧凭据。
   const headers =
-    providerConfig.access.type === "zhipu-account"
+    providerConfig.access.type === "zhipu-account" || providerConfig.access.type === "brand-managed"
       ? withoutModelAuthHeaders(staticHeaders)
       : staticHeaders;
   return {

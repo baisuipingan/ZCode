@@ -170,6 +170,7 @@ export type {
 export type {
   ChildClientPortsContext,
   ClientFacingPorts,
+  RuntimeBillingScope,
 } from "./runtime/helpers/child-client-ports.js";
 export type {
   ActiveTurnInfo,

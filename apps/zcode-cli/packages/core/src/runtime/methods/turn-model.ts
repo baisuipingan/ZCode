@@ -13,6 +13,7 @@ import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-h
 import { createRuntimeModel, withModelInvocationContext } from "./runtime-model.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 import { acceptOffPeakUserTakeover, selectionForPersistence } from "../off-peak/runtime.js";
+import { sameManagedBillingBinding } from "@zcode/shared";
 
 const selectionAdmissions = new WeakMap<
   AgentRuntimeInternal,
@@ -139,13 +140,27 @@ export async function applySubmissionExecutionState(
   modelExecution?: import("../types.js").ModelExecutionContext,
   preparedModel?: Model,
 ): Promise<Model | undefined> {
+  // 原因：Guide 可以在换号后到达旧运行；不能借切模型把既有执行转由新账号扣费。
+  if (
+    intent?.billingBinding &&
+    runtime.activeForegroundExecution?.billingBinding &&
+    !sameManagedBillingBinding(
+      intent.billingBinding,
+      runtime.activeForegroundExecution.billingBinding,
+    )
+  ) {
+    throw new Error("Managed billing account changed during the active execution");
+  }
   const selection = intent?.modelSelection;
   let model = preparedModel;
 
   if (selection) {
     model ??= createTurnModel(runtime, {
       selection,
-      requestDependencies: modelExecution?.requestDependencies,
+      requestDependencies: {
+        ...modelExecution?.requestDependencies,
+        ...(intent?.billingBinding ? { billingBinding: intent.billingBinding } : {}),
+      },
       retryBudget: resolveExecutionModelRetryBudget({
         selection,
         selectionFallback: modelExecution?.selectionFallback,

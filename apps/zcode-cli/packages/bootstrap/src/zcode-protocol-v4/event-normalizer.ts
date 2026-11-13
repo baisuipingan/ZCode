@@ -49,6 +49,7 @@ interface CanonicalConversationFactBase {
 }
 
 export interface CanonicalUserIntentFact extends CanonicalConversationFactBase {
+  billingBinding?: TurnInputIntentMetadata["billingBinding"];
   inputOrigin?: "desktop" | "mobile";
   conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
   botGroupSource?: import("@zcode/shared").BotGroupInputSource;
@@ -293,6 +294,7 @@ function normalizeTurnStarted(
       ? { fallbackReasonCode: payload.intent.fallbackReasonCode }
       : {}),
     ...(payload.intent?.modelSelection ? { modelSelection: payload.intent.modelSelection } : {}),
+    ...(payload.intent?.billingBinding ? { billingBinding: payload.intent.billingBinding } : {}),
     ...(payload.intent?.mode ? { mode: payload.intent.mode } : {}),
     ...(payload.intent?.planEnabled !== undefined
       ? { planEnabled: payload.intent.planEnabled }

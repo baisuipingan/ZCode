@@ -22,6 +22,10 @@ import {
 import { validateConfigSchema } from "./schema-validation.js";
 import type { ModelId, ProviderId, ProviderTemplateId } from "./ids.js";
 import type { ProviderConfigRuleData } from "./rule-data-schema.js";
+import {
+  managedProviderAccessSchema,
+  type ManagedProviderAccess,
+} from "@zcode/shared/model-selection";
 
 export type ProviderApiType = z.infer<typeof providerApiTypeDataSchema>;
 export type ProviderGroup = z.infer<typeof providerGroupDataSchema>;
@@ -111,7 +115,36 @@ export class ZhipuAccountAccessConfig extends ConfigOverlay<ZhipuAccountAccessCo
   }
 }
 
-export type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig;
+export class ManagedProviderAccessConfig extends ConfigOverlay<ManagedProviderAccessConfig> {
+  readonly type = "brand-managed" as const;
+  readonly credentialRef: string;
+  readonly billingBinding: ManagedProviderAccess["billingBinding"];
+  constructor(input: ManagedProviderAccess) {
+    super();
+    const parsed = managedProviderAccessSchema.parse(input);
+    this.credentialRef = parsed.credentialRef;
+    this.billingBinding = Object.freeze({ ...parsed.billingBinding });
+    Object.freeze(this);
+  }
+  overlay(next: ManagedProviderAccessConfig): ManagedProviderAccessConfig {
+    return next;
+  }
+  validateComplete(): readonly ConfigValidationIssue[] {
+    return [];
+  }
+  toJSON() {
+    return {
+      type: this.type,
+      credentialRef: this.credentialRef,
+      billingBinding: this.billingBinding,
+    };
+  }
+}
+
+export type ProviderAccessConfig =
+  | ApiKeyAccessConfig
+  | ZhipuAccountAccessConfig
+  | ManagedProviderAccessConfig;
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 
@@ -505,6 +538,8 @@ function overlayProviderAccess(
       return current.overlay(next as ApiKeyAccessConfig);
     case "zhipu-account":
       return current.overlay(next as ZhipuAccountAccessConfig);
+    case "brand-managed":
+      return current.overlay(next as ManagedProviderAccessConfig);
   }
 }
 

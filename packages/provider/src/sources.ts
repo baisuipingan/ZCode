@@ -6,6 +6,10 @@ import {
   type ModelConfigRules,
 } from "./config/index.js";
 import type { AccountProviderStates } from "./account-provider-state.js";
+import {
+  managedProviderPolicySchema,
+  type ManagedProviderPolicy,
+} from "@zcode/shared/model-selection";
 
 export interface ProviderSource<TSnapshot> {
   read(): Promise<TSnapshot>;
@@ -25,6 +29,7 @@ export interface ProviderConfigSnapshot {
 }
 
 export interface AccountProviderConfigSnapshot {
+  readonly managedPolicy?: ManagedProviderPolicy;
   readonly revision: string;
   readonly basedOnZCodeBuiltinRevision: string;
   readonly providers: ProviderConfigMap;
@@ -105,6 +110,9 @@ function freezeAccountProviderConfigSnapshot(
     revision: snapshot.revision,
     basedOnZCodeBuiltinRevision: snapshot.basedOnZCodeBuiltinRevision,
     providers: snapshot.providers,
+    ...(snapshot.managedPolicy
+      ? { managedPolicy: managedProviderPolicySchema.parse(snapshot.managedPolicy) }
+      : {}),
     ...(snapshot.states ? { states: snapshot.states } : {}),
   });
 }

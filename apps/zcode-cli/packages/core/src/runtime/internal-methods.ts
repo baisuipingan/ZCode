@@ -97,6 +97,7 @@ export interface AgentRuntimeCoreMethods {
   ): Promise<void>;
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
+    billingScope?: { billingBinding?: import("@zcode/shared").ManagedBillingBinding },
   ): Promise<void>;
   maybeStartGoalSummaryTitleGeneration(
     input: string,
@@ -164,6 +165,7 @@ export interface AgentRuntimeCoreMethods {
     options?: StopActiveForegroundExecutionOptions,
   ): StopActiveForegroundExecutionResult;
   enqueueBackgroundTaskNotification(notification: {
+    billingBinding?: import("@zcode/shared").ManagedBillingBinding;
     originMeta?: BackgroundResultOriginMeta;
     taskId?: string;
     text: string;

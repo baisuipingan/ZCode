@@ -221,8 +221,42 @@ function makeUnitFixture(runId = "dwfrun-relive"): {
 }
 
 describe("trackBackgroundTask 终态残留复位（单元级）", () => {
+  it.each(["managed", "ordinary"] as const)(
+    "首次追踪优先读取 run owner 的 %s scope，不借用登记时的无关活动轮",
+    async (kind) => {
+      const { deps, registry } = makeUnitFixture();
+      const originalBinding = {
+        origin: "https://account.example.invalid",
+        accountRef: "synthetic-account-a",
+        accountEpoch: 1,
+        policyRevision: "synthetic-scope",
+      };
+      const runBinding = kind === "managed" ? originalBinding : undefined;
+      registry.setBillingBindingSource(() => ({
+        billingBinding: { ...originalBinding, accountRef: "synthetic-account-b", accountEpoch: 2 },
+      }));
+      deps.dynamicWorkflowRunPort!.getBillingScope = () => ({ billingBinding: runBinding });
+      const tracker = new BackgroundTaskTracker(deps);
+      await tracker.trackBackgroundTask(
+        { id: "call-create", name: CREATE_WORKFLOW_TOOL_NAME, input: {} },
+        { status: "backgrounded", backgroundTaskId: "dwfrun-relive" },
+        createRootTraceContext({ sessionId: createSessionId("dwf-relive-unit") }),
+        undefined,
+      );
+      expect(registry.get("dwfrun-relive")?.billingBinding).toEqual(runBinding);
+    },
+  );
+
   it("重臂终态条目按新生命重盖 branchGeneration（cancel → rewind → resume 不被 stale-branch fencing 拦下）", async () => {
     const { deps, registry } = makeUnitFixture();
+    const originalBinding = {
+      origin: "https://account.example.invalid",
+      accountRef: "synthetic-account-a",
+      accountEpoch: 1,
+      policyRevision: "synthetic-scope",
+    };
+    let billingBinding = originalBinding;
+    registry.setBillingBindingSource(() => ({ billingBinding }));
     // 上一段生命周期在分支代 3 登记并被 cancel；随后用户 rewind，active 分支代推进到 7。
     registry.setActiveBranchGeneration(3);
     registry.register({
@@ -238,6 +272,7 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
     });
     expect(registry.get("dwfrun-relive")?.branchGeneration).toBe(3);
     registry.setActiveBranchGeneration(7);
+    billingBinding = { ...originalBinding, accountEpoch: 2 };
 
     const tracker = new BackgroundTaskTracker(deps);
     await tracker.trackBackgroundTask(
@@ -250,10 +285,19 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
     // 任务事件当旧分支残留丢弃。新生命必须盖当前 active 分支代。
     expect(registry.get("dwfrun-relive")?.branchGeneration).toBe(7);
     expect(registry.get("dwfrun-relive")?.status).toBe("running");
+    expect(registry.get("dwfrun-relive")?.billingBinding).toEqual(originalBinding);
   });
 
   it("仍在 running 的既有条目重臂保持自己的 branchGeneration（不是新生命）", async () => {
     const { deps, registry } = makeUnitFixture();
+    const originalBinding = {
+      origin: "https://account.example.invalid",
+      accountRef: "synthetic-account-a",
+      accountEpoch: 1,
+      policyRevision: "synthetic-scope",
+    };
+    let billingBinding = originalBinding;
+    registry.setBillingBindingSource(() => ({ billingBinding }));
     registry.setActiveBranchGeneration(3);
     registry.register({
       taskId: "dwfrun-relive",
@@ -266,6 +310,7 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
       isBackgrounded: true,
     });
     registry.setActiveBranchGeneration(7);
+    billingBinding = { ...originalBinding, accountEpoch: 2 };
     const tracker = new BackgroundTaskTracker(deps);
     await tracker.trackBackgroundTask(
       { id: "call-resume-new", name: CREATE_WORKFLOW_TOOL_NAME, input: {} },
@@ -274,6 +319,7 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
       undefined,
     );
     expect(registry.get("dwfrun-relive")?.branchGeneration).toBe(3);
+    expect(registry.get("dwfrun-relive")?.billingBinding).toEqual(originalBinding);
   });
 
   it("重臂既有终态条目：结算面复位、身份面保留，二次结算通知不被旧 claim 吞掉", async () => {

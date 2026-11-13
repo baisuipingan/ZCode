@@ -34,6 +34,12 @@ export function createRuntimeModel(
   },
 ): Model {
   const { retryBudget, scope = "session", ...factoryInput } = input;
+  const billingBinding =
+    input.requestDependencies?.billingBinding ??
+    runtime.activeForegroundExecution?.billingBinding ??
+    runtime.providerRuntimeHeadersPort?.billingBinding;
+  if (billingBinding)
+    factoryInput.requestDependencies = { ...factoryInput.requestDependencies, billingBinding };
   // 未绑定 Session 可恢复历史；仅在执行入口拒绝缺失选择，Factory 契约仍严格。
   if (!factoryInput.selection) {
     throw createCoreError(CoreErrorType.ConfigurationError, "Select a model before continuing", {
@@ -71,6 +77,16 @@ function withRuntimeInvocationLayer(
   includeSessionFeatures: boolean,
 ): Model {
   const layer: ModelInvocationContext = {
+    ...(runtime.providerRuntimeHeadersPort?.reportManagedOutcome
+      ? {
+          reportManagedOutcome: (outcome) =>
+            runtime.providerRuntimeHeadersPort?.reportManagedOutcome?.({
+              outcome,
+              sessionId: runtime.sessionId,
+              traceContext: getCurrentModelInvocationContext()?.traceContext,
+            }),
+        }
+      : {}),
     // 原因：标题、Memory、工具调用曾按用途覆写 other，丢失宿主分类。
     // 会话类型统一绑定在句柄上；工作区独立请求即使借用会话 runtime 也保持 other。
     modelRequestSessionType: sessionType,

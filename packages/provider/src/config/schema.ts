@@ -10,6 +10,7 @@ import {
   ProviderTemplate,
   ProviderTemplateMap,
   ZhipuAccountAccessConfig,
+  ManagedProviderAccessConfig,
 } from "./provider-config.js";
 import {
   builtinModelConfigRulesSchema,
@@ -148,9 +149,14 @@ function createProviderConfig(config: z.infer<typeof providerConfigDataSchema>):
     access:
       config.access == null
         ? config.access
-        : config.access.type !== "zhipu-account"
-          ? new ApiKeyAccessConfig(config.access)
-          : new ZhipuAccountAccessConfig(config.access),
+        : config.access.type === "brand-managed"
+          ? new ManagedProviderAccessConfig({
+              credentialRef: config.access.credentialRef,
+              billingBinding: config.access.billingBinding,
+            })
+          : config.access.type !== "zhipu-account"
+            ? new ApiKeyAccessConfig(config.access)
+            : new ZhipuAccountAccessConfig(config.access),
     api: config.api == null ? config.api : new ProviderApiConfig(config.api),
   });
 }

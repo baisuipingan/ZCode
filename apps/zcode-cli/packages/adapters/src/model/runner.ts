@@ -46,6 +46,10 @@ import {
 import { resolveModelRequestCapabilities } from "./tool-search.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
+import { managedModelConfigFingerprint, sameManagedBillingBinding } from "@zcode/shared";
+import { createHash } from "node:crypto";
+import { inspectProviderFailure } from "./failure-classifier.js";
+import { getHttpResponseStatus, unwrapRetryError } from "./failure-inspection.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -171,6 +175,7 @@ export class AiSdkModelAdapter {
     const optionSpecs = options.modelConfig.optionSpecs;
     const toLegacyRequest = (request: ModelExecutionRequest): AiSdkModelTextRequest => {
       const context = getCurrentModelInvocationContext();
+      let usedManagedKey: string | undefined;
       const {
         refreshRuntimeHeadersBeforeAttempt: contextRefreshRuntimeHeadersBeforeAttempt,
         ...invocationContext
@@ -211,16 +216,83 @@ export class AiSdkModelAdapter {
                 : requestAuth;
             return { headersApplied: true, requestAuth: refreshedAuth };
           }
-        : options.providerConfig.access.type === "zhipu-account"
-          ? (contextRefreshRuntimeHeadersBeforeAttempt ??
-            (async () => {
-              throw new ModelProtocolError(
-                ModelErrorCode.ModelRequestAuthMissing,
-                `Account model request auth is unavailable: ${resolved.providerId}/${resolved.modelId}`,
-              );
-            }))
-          : undefined;
+        : options.providerConfig.access.type === "brand-managed"
+          ? async (input: ModelRequestAuthSourceInput) => {
+              // 鉴权阶段失败不属于上一次attempt已使用的Key。
+              usedManagedKey = undefined;
+              const access = options.providerConfig.access;
+              if (
+                access.type !== "brand-managed" ||
+                !sameManagedBillingBinding(
+                  options.requestDependencies?.billingBinding,
+                  access.billingBinding,
+                ) ||
+                !contextRefreshRuntimeHeadersBeforeAttempt
+              ) {
+                throw new ModelProtocolError(
+                  ModelErrorCode.ModelRequestAuthMissing,
+                  "Managed billing authorization is unavailable or changed",
+                );
+              }
+              const result = await contextRefreshRuntimeHeadersBeforeAttempt({
+                ...input,
+                managedAccess: {
+                  credentialRef: access.credentialRef,
+                  billingBinding: access.billingBinding,
+                },
+                modelConfigRevision: managedModelConfigFingerprint(options.modelConfig.toJSON()),
+              });
+              if (!result.headersApplied || !result.requestAuth?.apiKey) {
+                throw new ModelProtocolError(
+                  ModelErrorCode.ModelRequestAuthMissing,
+                  "Managed inference credential is unavailable",
+                );
+              }
+              usedManagedKey = result.requestAuth.apiKey;
+              return result;
+            }
+          : options.providerConfig.access.type === "zhipu-account"
+            ? (contextRefreshRuntimeHeadersBeforeAttempt ??
+              (async () => {
+                throw new ModelProtocolError(
+                  ModelErrorCode.ModelRequestAuthMissing,
+                  `Account model request auth is unavailable: ${resolved.providerId}/${resolved.modelId}`,
+                );
+              }))
+            : undefined;
       return {
+        ...(options.providerConfig.access.type === "brand-managed" && context?.reportManagedOutcome
+          ? {
+              reportManagedFailure: async (error: unknown) => {
+                if (!usedManagedKey || options.providerConfig.access.type !== "brand-managed")
+                  return;
+                const status = getHttpResponseStatus(unwrapRetryError(error));
+                const code = inspectProviderFailure(error).providerErrorCode;
+                const kind =
+                  status === 401 && ["INVALID_API_KEY", "API_KEY_DISABLED"].includes(code ?? "")
+                    ? ("credential_rejected_candidate" as const)
+                    : status === 403 && code === "INSUFFICIENT_BALANCE"
+                      ? ("balance_rejected_candidate" as const)
+                      : undefined;
+                if (!kind) return;
+                try {
+                  // 同名上游错误只能提示Host同步，不能证明本机Key失效或触发自动重放。
+                  await context.reportManagedOutcome?.({
+                    kind,
+                    managedAccess: {
+                      credentialRef: options.providerConfig.access.credentialRef,
+                      billingBinding: options.providerConfig.access.billingBinding,
+                    },
+                    credentialFingerprint: createHash("sha256")
+                      .update(usedManagedKey)
+                      .digest("hex"),
+                  });
+                } catch {
+                  /* 展示恢复是best effort，不能覆盖原错误或改变已有重试策略。 */
+                }
+              },
+            }
+          : {}),
         toolSearchEnabled: request.toolSearchEnabled,
         messages: request.messages,
         tools: request.tools,

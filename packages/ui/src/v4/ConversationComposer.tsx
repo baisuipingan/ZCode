@@ -1,3 +1,8 @@
+import {
+  useBrandAccount,
+  BrandInferenceStatus,
+  BrandComposerModelControls,
+} from "@/brand-account/index.js";
 import type { SessionLifecycleSnapshot } from "@zcode/shared";
 import {
   WorkspaceHookPendingIndicator,
@@ -643,6 +648,9 @@ function ConversationComposerImpl({
   appSlashCommands,
   onDropTargetControllerChange,
 }: ConversationComposerProps) {
+  const brandAccount = useBrandAccount();
+  const brandInferenceBlocked =
+    brandAccount.enabled && brandAccount.snapshot?.inference?.status !== "configured";
   const remoteAvailable = useRemoteConversationAvailable();
   const remoteController = useOptionalRemoteWorkspaceController();
   const reconnectProject = useRemoteProjectReconnect();
@@ -1420,6 +1428,7 @@ function ConversationComposerImpl({
     !pendingShareContext;
   const canReload = recoveryAllowed && reloadText && remoteAvailable;
   const canSend =
+    !brandInferenceBlocked &&
     !disabled &&
     !pending &&
     hasDraftToSubmit &&
@@ -1438,6 +1447,8 @@ function ConversationComposerImpl({
       existingTelemetrySeed?: ConversationPromptTelemetrySeed,
       requestedDelivery?: "startNow" | "queue" | "guide",
     ) => {
+      // Host策略未就绪时保留草稿；目标CLI的applied确认由可信提交链完成。
+      if (brandInferenceBlocked) return;
       const submittedAt = performance.timeOrigin + performance.now();
       // IME 候选期间 textRef 尚未接收最终 onChange；提交必须与 claim/恢复共用 Lexical 快照。
       const submittedDraft = snapshotDraftOfEditor();
@@ -1843,6 +1854,7 @@ function ConversationComposerImpl({
       }
     },
     [
+      brandInferenceBlocked,
       recoveryCommand,
       recoveryAllowed,
       uiStore,
@@ -2062,7 +2074,17 @@ function ConversationComposerImpl({
     : sendTooltipTitle;
   const resolvedSendTooltipShortcut = modifierTooltip?.shortcut ?? sendShortcut;
   const stopTooltipTitle = intl.formatMessage({ id: "chat.stop" });
-  const visibleError = error && !shouldSuppressChatErrorBanner(error) ? error : null;
+  const brandModelSetupError =
+    brandAccount.enabled &&
+    error?.code !== undefined &&
+    [
+      "model_config_missing",
+      "MODEL_CONFIG_MISSING",
+      "ModelConfigMissing",
+      "ZCODE_RUNTIME_MODEL_UNAVAILABLE",
+    ].includes(error.code);
+  const visibleError =
+    error && !brandModelSetupError && !shouldSuppressChatErrorBanner(error) ? error : null;
 
   useEffect(() => {
     if (!visibleError || !conversationTelemetry || !telemetryVisible) return;
@@ -2512,7 +2534,20 @@ function ConversationComposerImpl({
             {intl.formatMessage({ id: "remote.conversation.sendUnavailable" })}
           </span>
         ) : null}
-        {remoteAvailable ? (
+        {remoteAvailable && brandAccount.enabled ? (
+          <BrandComposerModelControls
+            modelSelectionView={modelSelectionView}
+            modelSelectionState={modelSelectionState}
+            modelSelectionRefresh={modelSelectionRefresh}
+            draftConfig={draftConfig}
+            requestedSelection={composerDraft.modelSelection}
+            disabled={disabled || runtimeBlocked}
+            activeConfigPicker={activeConfigPicker}
+            onConfigPickerOpenChange={handleConfigPickerOpenChange}
+            onSelectModel={handleSelectModelTrace}
+            onSelectThought={onSelectThought}
+          />
+        ) : remoteAvailable ? (
           <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
             <V4ComposerModelControls
               workspacePath={workspacePath}
@@ -2585,8 +2620,10 @@ function ConversationComposerImpl({
       </div>
     ),
     [
+      brandAccount.enabled,
       canSend,
       activeConfigPicker,
+      composerDraft.modelSelection,
       composerPhase,
       composerUsage,
       disabled,
@@ -2825,6 +2862,19 @@ function ConversationComposerImpl({
             })}
           </div>
         ) : null}
+        {brandModelSetupError && !brandInferenceBlocked ? (
+          <p role="alert" className="mb-2 text-ui-caption text-warning">
+            {intl.formatMessage({ id: "brandAccount.models.currentUnavailable" })}
+          </p>
+        ) : null}
+        {brandInferenceBlocked ? (
+          <div
+            data-testid="brand-inference-pending"
+            className="mb-2 rounded-lg bg-surface p-3 text-ui-caption text-foreground-subtle"
+          >
+            <BrandInferenceStatus />
+          </div>
+        ) : null}
         <ChatPromptEditor
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
@@ -2838,6 +2888,7 @@ function ConversationComposerImpl({
           disabled={disabled || (mode === "reject" && !recoveryAvailable)}
           submitting={pending}
           submitDisabled={
+            brandInferenceBlocked ||
             pending ||
             (!canReload &&
               (runtimeBlocked || !routingAllowsSend || !attachmentsReady || !submissionReady))

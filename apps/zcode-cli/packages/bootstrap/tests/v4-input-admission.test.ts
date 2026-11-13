@@ -97,6 +97,12 @@ describe("v4 input admission canonical intent", () => {
         transcriptMessageId: "msg-user",
         coveredByStableCompact: false,
         intent: {
+          billingBinding: {
+            origin: "https://account.example",
+            accountRef: "user:A",
+            accountEpoch: 1,
+            policyRevision: "policy:A",
+          },
           kind: "sendGoalCommand",
           text: "original objective",
           inputOrigin: "mobile",
@@ -138,6 +144,12 @@ describe("v4 input admission canonical intent", () => {
         resolve,
       ),
     ).toEqual({
+      billingBinding: {
+        origin: "https://account.example",
+        accountRef: "user:A",
+        accountEpoch: 1,
+        policyRevision: "policy:A",
+      },
       kind: "sendGoalCommand",
       text: "original objective",
       inputOrigin: "mobile",

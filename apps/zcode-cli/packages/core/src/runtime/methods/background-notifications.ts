@@ -11,6 +11,7 @@ import { joinTaskNotificationBatch } from "../../runtime-task/notification.js";
 export function enqueueBackgroundTaskNotification(
   this: AgentRuntimeInternal,
   notification: {
+    billingBinding?: import("@zcode/shared").ManagedBillingBinding;
     originMeta?: BackgroundResultOriginMeta;
     taskId?: string;
     text: string;
@@ -44,6 +45,9 @@ export function enqueueBackgroundTaskNotification(
   }
   const commandId = createRuntimeCommandId();
   this.enqueueRuntimeCommand({
+    ...(notification.billingBinding
+      ? { billingBinding: structuredClone(notification.billingBinding) }
+      : {}),
     branchGeneration,
     createdAt: new Date(),
     id: commandId,

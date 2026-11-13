@@ -75,6 +75,7 @@ import {
   createDynamicWorkflowRunService,
   resolveDynamicWorkflowJournalStore,
   type DynamicWorkflowActorRuntimeInput,
+  type DynamicWorkflowRunServiceDeps,
 } from "../src/app/dynamic-workflow-run-service.js";
 import {
   createWorkflowConcurrencyGovernor,
@@ -258,6 +259,7 @@ function scriptedModelAdapter(
 }
 
 interface HarnessOptions {
+  captureBillingScope?: DynamicWorkflowRunServiceDeps["captureBillingScope"];
   actorScripts?: Record<string, ActorPlan[]>;
   availableParallelism?: () => number;
   /** 进程级治理器的窄端口；缺省不接（actor 不受闸门约束，launch 也不登记上界）。 */
@@ -320,7 +322,7 @@ interface Harness {
   /** resumeFromStore 被调用的 actor 会话（rehydration 用例的观察面）。 */
   resumeCalls: SessionId[];
   runEvents: DynamicWorkflowRunProgressPayload[];
-  runEventRoutings: { parentSessionId?: string }[];
+  runEventRoutings: Parameters<NonNullable<DynamicWorkflowRunServiceDeps["onRunEvent"]>>[1][];
   service: ReturnType<typeof createDynamicWorkflowRunService>;
   sessionEvents: unknown[];
   taskLinks: CreateSessionTaskLinkInput[];
@@ -481,7 +483,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
   const logs: { level: string; message: string; context?: Record<string, unknown> }[] = [];
   const persistedTitles: string[] = [];
   const runEvents: DynamicWorkflowRunProgressPayload[] = [];
-  const runEventRoutings: { parentSessionId?: string }[] = [];
+  const runEventRoutings: Harness["runEventRoutings"] = [];
   const sessionEvents: unknown[] = [];
   const actorSubscribeCalls: SessionId[] = [];
   const resumeCalls: SessionId[] = [];
@@ -503,6 +505,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
   };
 
   const service = createDynamicWorkflowRunService({
+    captureBillingScope: options.captureBillingScope,
     ...(options.availableParallelism ? { availableParallelism: options.availableParallelism } : {}),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     ...(options.resolveLaunchInputId === undefined
@@ -696,6 +699,142 @@ async function amendRun(
 async function settle(harness: Harness, runId: string): Promise<void> {
   await harness.service.waitForTask(runId);
 }
+
+describe("dynamic workflow run service — 冻结原扣费归属", () => {
+  const binding = (accountRef: string) => ({
+    origin: "https://example.invalid",
+    accountRef,
+    accountEpoch: 1,
+    policyRevision: "workflow-scope",
+  });
+
+  it("父轮结束/切账号后，延迟 actor 与早期进度都只拿创建时的克隆，不写入 journal", async () => {
+    let scope = { billingBinding: binding("A") };
+    const original = structuredClone(scope);
+    const capture = vi.fn(() => scope);
+    const harness = makeHarness({ captureBillingScope: capture });
+    const runId = await submitRun(harness, {
+      cwd: TEST_CWD,
+      scriptText: [
+        "interface Answer { text: string }",
+        'const a = await agent("first").ask<Answer>("first");',
+        'const b = await agent("later").ask<Answer>("later");',
+        "return b;",
+      ].join("\n"),
+      trace: traceFor("frozen-workflow"),
+    });
+    // submit 已返回、沙箱还独立运行；原对象再被修改也不能影响 run 的闭包。
+    scope.billingBinding.accountRef = "mutated";
+    scope = { billingBinding: binding("B") };
+    await settle(harness, runId);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(harness.actorRuntimeInputs).toHaveLength(2);
+    expect(harness.actorRuntimeInputs.map((input) => input.billingScope)).toEqual([
+      original,
+      original,
+    ]);
+    const scopeCopy = harness.service.getBillingScope!(runId)!;
+    scopeCopy.billingBinding!.accountRef = "changed-by-reader";
+    expect(harness.service.getBillingScope!(runId)).toEqual(original);
+    expect(harness.runEventRoutings.length).toBeGreaterThan(0);
+    expect(
+      harness.runEventRoutings.every(
+        (routing) => JSON.stringify(routing.billingScope) === JSON.stringify(original),
+      ),
+    ).toBe(true);
+    const persisted = JSON.stringify({
+      run: harness.journal.getRun(runId),
+      events: harness.journal.listEvents(runId, { types: "all", reportItems: "all" }),
+    });
+    expect(persisted).not.toContain("billingBinding");
+    expect(persisted).not.toContain("accountRef");
+  });
+
+  it("普通 API 的显式无绑定不会在延迟启动后借当前 managed 账户", async () => {
+    let scope: ReturnType<NonNullable<HarnessOptions["captureBillingScope"]>> = {};
+    const harness = makeHarness({ captureBillingScope: () => scope });
+    const runId = await submitRun(harness, {
+      cwd: TEST_CWD,
+      scriptText: TYPED_SCRIPT,
+      trace: traceFor("ordinary-workflow"),
+    });
+    scope = { billingBinding: binding("B") };
+    await settle(harness, runId);
+    expect(harness.actorRuntimeInputs[0]?.billingScope).toEqual({});
+  });
+
+  it("同 run 的 GUI/自动恢复沿原 A，即使此刻另一轮是 B，也不重新捕获", async () => {
+    let scope = { billingBinding: binding("A") };
+    const original = structuredClone(scope);
+    const capture = vi.fn(() => scope);
+    const harness = makeHarness({ captureBillingScope: capture, hangActors: true });
+    const runId = await submitRun(harness, {
+      cwd: TEST_CWD,
+      scriptText: TYPED_SCRIPT,
+      trace: traceFor("resume-workflow-A"),
+    });
+    await vi.waitFor(() => expect(harness.actorRuntimeInputs).toHaveLength(1));
+    await harness.service.cancel(runId);
+    await settle(harness, runId);
+    scope = { billingBinding: binding("B") };
+    expect(await harness.service.resume!(runId)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(harness.actorRuntimeInputs).toHaveLength(2));
+    await harness.service.cancel(runId);
+    await settle(harness, runId);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(harness.actorRuntimeInputs.map((input) => input.billingScope)).toEqual([
+      original,
+      original,
+    ]);
+  });
+
+  it("冷恢复缺少可信内存归属时保持无绑定，不捕获当前 B", async () => {
+    const before = makeHarness({
+      captureBillingScope: () => ({ billingBinding: binding("A") }),
+      hangActors: true,
+    });
+    const runId = await submitRun(before, {
+      cwd: TEST_CWD,
+      scriptText: TYPED_SCRIPT,
+      trace: traceFor("cold-workflow-A"),
+    });
+    await vi.waitFor(() => expect(before.actorRuntimeInputs).toHaveLength(1));
+    await before.service.cancel(runId);
+    await settle(before, runId);
+    const capture = vi.fn(() => ({ billingBinding: binding("B") }));
+    const after = makeHarness({ journal: before.journal, captureBillingScope: capture });
+    expect(await after.service.resume!(runId)).toMatchObject({ ok: true });
+    await settle(after, runId);
+    expect(capture).not.toHaveBeenCalled();
+    expect(after.actorRuntimeInputs[0]?.billingScope).toEqual({});
+    expect(after.service.getBillingScope!(runId)).toEqual({});
+  });
+
+  it("amend 在等待前驱/导入前冻结新 run 的 B，不借等待期间出现的 C", async () => {
+    let scope = { billingBinding: binding("A") };
+    const harness = makeHarness({ captureBillingScope: () => scope });
+    const predecessor = await submitRun(harness, {
+      cwd: TEST_CWD,
+      scriptText: 'return "seed";',
+      trace: traceFor("amend-origin-A"),
+    });
+    await settle(harness, predecessor);
+    scope = { billingBinding: binding("B") };
+    const expected = structuredClone(scope);
+    const amended = harness.service.amend!({
+      cwd: TEST_CWD,
+      predecessorRunId: predecessor,
+      scriptText: TYPED_SCRIPT,
+      trace: traceFor("amend-new-B"),
+    });
+    scope = { billingBinding: binding("C") };
+    const result = await amended;
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("synthetic amend refused");
+    await settle(harness, result.runId);
+    expect(harness.actorRuntimeInputs.at(-1)?.billingScope).toEqual(expected);
+  });
+});
 
 describe("dynamic workflow run service — 在飞计数与结算订阅（registry 安全边界的读面）", () => {
   it("submit 后 countLiveRuns 为 1；结算后归零，监听器恰好收到一次、计数已扣掉本 run", async () => {

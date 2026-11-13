@@ -89,7 +89,9 @@ export async function loadConfiguration(providersFile: string, listFile: string)
   const secrets: string[] = [];
   const rules = original.toJSON().map((rule) => {
     const access = rule.config.access;
-    if (access?.type === "zhipu-account") throw new Error("此测试入口只支持 API Key Provider");
+    // 受管账户凭据归 Host；不能把带账户归属的 access 当成可缺省的静态 Key。
+    if (access?.type === "zhipu-account" || access?.type === "brand-managed")
+      throw new Error("此测试入口只支持 API Key Provider");
     const key = access?.apiKey?.trim();
     if (key) secrets.push(key);
     else missingKeys.add(rule.providerId);

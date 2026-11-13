@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ZCode · 账号与余额设计原型</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ui-font-size: 14px;
+        --text-ui-base: var(--ui-font-size);
+        --text-ui-caption: calc(var(--ui-font-size) - 1px);
+        --text-ui-sm: calc(var(--ui-font-size) - 2px);
+        --text-ui-lg: calc(var(--ui-font-size) + 2px);
+        --text-ui-xl: calc(var(--ui-font-size) + 4px);
+        --text-ui-settings-title: calc(var(--ui-font-size) + 10px);
+        --color-background: #f8f8f8;
+        --color-sidebar: #f0f0f0;
+        --color-card: #fff;
+        --color-popover: #fff;
+        --color-foreground: #262626;
+        --color-foreground-subtle: #666;
+        --color-border: #dedede;
+        --color-brand: #161616;
+        --color-brand-foreground: #fff;
+        --color-surface: #f1f1f1;
+        --color-warning: #a35800;
+        --color-success: #1e8a3e;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --color-background: #161616;
+        --color-sidebar: #161616;
+        --color-card: #2b2b2b;
+        --color-popover: #202020;
+        --color-foreground: #e5e5e5;
+        --color-foreground-subtle: #b0b0b0;
+        --color-border: #414141;
+        --color-brand: #fff;
+        --color-brand-foreground: #161616;
+        --color-surface: #303030;
+        --color-warning: #ffad55;
+        --color-success: #46bf72;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--color-background);
+        color: var(--color-foreground);
+        font:
+          var(--text-ui-base)/1.55 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button,
+      a {
+        touch-action: manipulation;
+      }
+      button {
+        cursor: pointer;
+        border: 1px solid var(--color-border);
+        background: var(--color-card);
+        border-radius: 8px;
+        padding: 7px 13px;
+      }
+      button:hover {
+        background: var(--color-surface);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--color-foreground);
+        outline-offset: 3px;
+      }
+      .primary {
+        background: var(--color-brand);
+        color: var(--color-brand-foreground);
+        border-color: var(--color-brand);
+      }
+      .primary:hover {
+        filter: brightness(0.8);
+        background: var(--color-brand);
+      }
+      .ghost {
+        border-color: transparent;
+        background: transparent;
+      }
+      .icon {
+        width: 32px;
+        height: 32px;
+        padding: 3px;
+        font-size: var(--text-ui-xl);
+        display: inline-grid;
+        place-items: center;
+      }
+      .muted {
+        color: var(--color-foreground-subtle);
+      }
+      .caption {
+        font-size: var(--text-ui-caption);
+      }
+      .small {
+        font-size: var(--text-ui-sm);
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+      .grow {
+        flex: 1;
+        min-width: 0;
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: var(--text-ui-settings-title);
+        font-weight: 600;
+      }
+      h2 {
+        font-size: var(--text-ui-lg);
+        font-weight: 600;
+      }
+      hr {
+        border: 0;
+        border-top: 1px solid var(--color-border);
+        margin: 18px 0;
+      }
+      .demo {
+        padding: 9px 20px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 1px solid var(--color-border);
+        flex-wrap: wrap;
+      }
+      .demo strong {
+        font-size: var(--text-ui-caption);
+      }
+      .demo select {
+        padding: 4px 8px;
+        border: 1px solid var(--color-border);
+        background: var(--color-card);
+        border-radius: 6px;
+      }
+      .demo button {
+        padding: 3px 9px;
+      }
+      .app {
+        min-height: calc(100vh - 55px);
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+      }
+      aside {
+        display: flex;
+        flex-direction: column;
+        background: var(--color-sidebar);
+        border-right: 1px solid var(--color-border);
+        padding: 20px 14px;
+        gap: 22px;
+      }
+      .logo {
+        width: 28px;
+        height: 28px;
+        border: 1px solid var(--color-border);
+        background: var(--color-card);
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      .nav {
+        display: grid;
+        gap: 4px;
+      }
+      .nav button {
+        text-align: left;
+        background: transparent;
+        border-color: transparent;
+      }
+      .nav .selected {
+        background: var(--color-card);
+        border-color: var(--color-border);
+      }
+      .nav button:disabled {
+        opacity: 0.7;
+      }
+      .sidebar-fill {
+        flex: 1;
+      }
+      .account-mini {
+        padding: 12px 4px 0;
+        border-top: 1px solid var(--color-border);
+        display: grid;
+        gap: 8px;
+      }
+      .avatar {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .profile-button {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .money {
+        font-variant-numeric: tabular-nums;
+        font-size: var(--text-ui-settings-title);
+        font-weight: 600;
+        letter-spacing: -0.5px;
+      }
+      .mini-money {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+      .sync.spinning {
+        animation: spin 1s linear infinite;
+      }
+      .warning {
+        color: var(--color-warning);
+      }
+      .success {
+        color: var(--color-success);
+      }
+      main {
+        padding: 36px 48px;
+        min-width: 0;
+      }
+      .content {
+        max-width: 850px;
+        margin: 0 auto;
+      }
+      .breadcrumb {
+        margin-bottom: 28px;
+      }
+      .title {
+        margin-bottom: 24px;
+      }
+      .card {
+        padding: 20px;
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: var(--color-card);
+      }
+      .profile-data {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-top: 20px;
+      }
+      .label {
+        font-size: var(--text-ui-caption);
+        color: var(--color-foreground-subtle);
+        margin-bottom: 4px;
+      }
+      .balance-card .row {
+        gap: 8px;
+      }
+      .wallet-bottom {
+        margin-top: 12px;
+      }
+      .balance-actions {
+        margin-left: auto;
+      }
+      .notice {
+        padding: 10px 12px;
+        background: var(--color-surface);
+        border-radius: 8px;
+        margin-top: 14px;
+      }
+      .table-wrap {
+        overflow: auto;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        white-space: nowrap;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--color-border);
+        font-size: var(--text-ui-caption);
+      }
+      th {
+        color: var(--color-foreground-subtle);
+        font-weight: 400;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .text-link {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      dialog {
+        color: var(--color-foreground);
+        background: var(--color-popover);
+        border: 1px solid var(--color-border);
+        border-radius: 16px;
+        padding: 24px;
+        width: min(100% - 24px, 480px);
+        max-height: 90vh;
+        overflow: auto;
+      }
+      dialog::backdrop {
+        background: #0006;
+      }
+      .dialog-head {
+        margin-bottom: 20px;
+      }
+      .amounts {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .amounts button {
+        padding: 10px 4px;
+      }
+      .amounts .selected,
+      .methods .selected {
+        border-color: var(--color-brand);
+        box-shadow: 0 0 0 1px var(--color-brand);
+      }
+      .methods {
+        display: flex;
+        gap: 8px;
+      }
+      .full {
+        width: 100%;
+      }
+      .quote {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 8px;
+        background: var(--color-surface);
+      }
+      .wait-area {
+        border: 1px dashed var(--color-border);
+        border-radius: 12px;
+        min-height: 150px;
+        display: grid;
+        align-content: center;
+        text-align: center;
+        padding: 20px;
+        gap: 8px;
+      }
+      .wait-icon {
+        font-size: var(--text-ui-settings-title);
+      }
+      .badge {
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: var(--color-surface);
+        font-size: var(--text-ui-sm);
+      }
+      .login-shell {
+        max-width: 360px;
+        margin: 65px auto;
+      }
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+      .field input {
+        border: 1px solid var(--color-border);
+        padding: 9px 10px;
+        border-radius: 8px;
+        background: var(--color-card);
+        width: 100%;
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      #toast {
+        position: fixed;
+        bottom: 22px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: calc(100vw - 30px);
+        padding: 10px 16px;
+        border: 1px solid var(--color-border);
+        border-radius: 9px;
+        background: var(--color-popover);
+        box-shadow: 0 6px 25px #0002;
+        z-index: 5;
+      }
+      .callout {
+        font-size: var(--text-ui-caption);
+        color: var(--color-foreground-subtle);
+        margin-top: 18px;
+      }
+      .login-foot {
+        display: flex;
+        justify-content: space-between;
+      }
+      button.danger {
+        color: var(--color-warning);
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sync.spinning {
+          animation: none;
+        }
+      }
+      @media (max-width: 780px) {
+        .app {
+          grid-template-columns: 200px minmax(0, 1fr);
+        }
+        main {
+          padding: 24px;
+        }
+        .profile-data {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 590px) {
+        .app {
+          grid-template-columns: 1fr;
+        }
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid var(--color-border);
+          padding: 12px 16px;
+          gap: 12px;
+        }
+        .nav,
+        .sidebar-fill {
+          display: none;
+        }
+        .account-mini {
+          padding-top: 8px;
+        }
+        .account-mini .mini-extra {
+          display: none;
+        }
+        main {
+          padding: 20px 16px;
+        }
+        .demo {
+          padding: 8px 12px;
+          gap: 8px;
+        }
+        .balance-actions {
+          margin-left: 0;
+        }
+        .balance-card > .row {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo" role="region" aria-label="原型演示控制">
+      <strong>交互原型 · 示例数据，不会登录或付款</strong>
+      <label class="caption"
+        >演示场景
+        <select id="scenario">
+          <option value="normal">正常余额</option>
+          <option value="offline">网络中断</option>
+          <option value="empty">余额为零</option>
+          <option value="frozen">有冻结金额</option>
+          <option value="expired">登录过期</option>
+        </select></label
+      >
+      <span class="grow"></span><button id="theme">切换深色</button
+      ><button id="show-login">查看登录页</button>
+    </div>
+    <div class="app">
+      <aside>
+        <div class="row">
+          <span class="logo">Z</span><strong>ZCode</strong><span class="badge">设计预览</span>
+        </div>
+        <div class="nav">
+          <button disabled>＋ 新建任务</button><button disabled>最近任务</button
+          ><button disabled>成果文件</button>
+          <hr />
+          <button class="selected">账号与余额</button><button disabled>通用设置</button>
+        </div>
+        <div class="sidebar-fill"></div>
+        <div class="caption muted mini-extra">设置与任务区域仅作布局示意。</div>
+        <div class="account-mini" id="mini">
+          <button class="profile-button" id="profile">
+            <span class="avatar">林</span
+            ><span><strong>林晓</strong><br /><span class="muted small">账号与余额</span></span>
+          </button>
+          <div class="row between">
+            <span class="caption">可用余额 <span class="mini-money balance">¥128.60</span></span
+            ><button class="icon sync" aria-label="同步余额" title="同步余额">⟳</button>
+          </div>
+          <div class="row between mini-extra">
+            <button class="recharge">充值</button><span class="small muted status">刚刚更新</span>
+          </div>
+        </div>
+      </aside>
+      <main>
+        <section class="content" id="account-view">
+          <div class="breadcrumb caption muted">设置 / 账号与余额</div>
+          <div class="title row between">
+            <div>
+              <h1>账号与余额</h1>
+              <p class="muted caption">管理你的账号，随时查看余额与充值记录。</p>
+            </div>
+            <button class="ghost danger" id="logout">退出登录</button>
+          </div>
+          <div class="stack">
+            <div class="card">
+              <div class="row">
+                <span class="avatar">林</span>
+                <div>
+                  <strong>林晓</strong>
+                  <div class="caption muted">个人账号</div>
+                </div>
+              </div>
+              <div class="profile-data">
+                <div>
+                  <div class="label">邮箱</div>
+                  <span>linxiao@example.com</span>
+                </div>
+                <div>
+                  <div class="label">用户 ID</div>
+                  <span>10086</span>
+                </div>
+              </div>
+            </div>
+            <div class="card balance-card">
+              <div class="label">可用余额 · 人民币（示例）</div>
+              <div class="row">
+                <span class="money balance">¥128.60</span
+                ><button class="icon sync" aria-label="同步余额" title="同步余额">⟳</button>
+                <div class="balance-actions"><button class="primary recharge">充值</button></div>
+              </div>
+              <p class="wallet-bottom caption muted status" aria-live="polite">刚刚更新</p>
+              <p class="caption warning hidden" id="sync-error">
+                暂时无法同步，当前显示上次余额。请检查网络后重试。
+              </p>
+              <div class="notice caption hidden" id="frozen">
+                另有 ¥12.00 冻结金额，暂不可用。上方已显示可用余额。
+              </div>
+            </div>
+            <div class="card">
+              <div class="row between">
+                <h2>充值记录</h2>
+                <button class="text-link caption" id="refresh-orders">刷新记录</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>实付</th>
+                      <th>到账额度</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orders">
+                    <tr>
+                      <td>11 月 10 日 16:20</td>
+                      <td>¥50.00</td>
+                      <td>¥50.00</td>
+                      <td class="success">已到账</td>
+                    </tr>
+                    <tr>
+                      <td>11 月 8 日 10:45</td>
+                      <td>¥30.00</td>
+                      <td>¥30.00</td>
+                      <td class="success">已到账</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="callout">示例为同币种、无赠送和手续费。实际金额以订单为准。</p>
+            </div>
+          </div>
+        </section>
+        <section class="login-shell hidden" id="login-view">
+          <div class="stack">
+            <span class="logo">Z</span>
+            <div>
+              <h1>登录，开始使用</h1>
+              <p class="caption muted">登录你的账号，继续完成开发与办公任务。</p>
+            </div>
+            <form id="login-form" class="stack">
+              <label class="field"
+                >邮箱<input type="email" placeholder="你的邮箱" autocomplete="off" /></label
+              ><label class="field"
+                >密码<input type="password" placeholder="你的密码" autocomplete="off"
+              /></label>
+              <p class="caption muted">这是原型，无需填写真实账号。</p>
+              <button class="primary full" type="submit">进入登录后演示</button>
+            </form>
+            <div class="login-foot caption">
+              <button class="text-link" id="register">注册账号</button
+              ><button class="text-link" id="forgot">忘记密码</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="recharge-dialog" aria-labelledby="recharge-title">
+      <div class="row between dialog-head">
+        <h2 id="recharge-title">充值余额</h2>
+        <button id="close-dialog" class="ghost icon" aria-label="关闭充值">×</button>
+      </div>
+      <section class="stack" id="choose-step">
+        <p class="caption muted">当前可用余额 <span class="balance">¥128.60</span></p>
+        <div>
+          <div class="label">选择充值金额</div>
+          <div class="amounts" id="amounts">
+            <button data-amount="10">¥10</button
+            ><button data-amount="30" class="selected">¥30</button
+            ><button data-amount="50">¥50</button><button data-amount="100">¥100</button
+            ><button data-amount="200">¥200</button><button data-amount="500">¥500</button>
+          </div>
+        </div>
+        <div>
+          <div class="label">支付方式（示例）</div>
+          <div class="methods">
+            <button class="selected" data-method="微信支付">微信支付</button
+            ><button data-method="支付宝">支付宝</button>
+          </div>
+        </div>
+        <div class="quote caption">
+          <div class="row between">
+            <span class="muted">实付金额</span><strong id="pay-amount">¥30.00</strong>
+          </div>
+          <div class="row between">
+            <span class="muted">预计到账</span><span id="credit-amount">¥30.00</span>
+          </div>
+          <div class="row between">
+            <span class="muted">手续费 / 赠送</span><span>无（示例）</span>
+          </div>
+        </div>
+        <button id="create-order" class="primary full">确认充值（演示）</button>
+      </section>
+      <section id="wait-step" class="stack hidden">
+        <div class="row between">
+          <span class="muted caption">实付金额</span><strong id="order-amount">¥30.00</strong>
+        </div>
+        <div class="wait-area">
+          <span class="wait-icon">▦</span><strong id="wait-title">使用微信扫码支付</strong>
+          <p class="muted caption">
+            正式界面在此显示支付二维码。<br />原型不提供真实二维码或支付链接。
+          </p>
+        </div>
+        <div class="caption row between">
+          <span class="muted">订单 DEMO-20261111</span><span id="order-status">等待支付</span>
+        </div>
+        <button id="verify-order" class="full">我已支付，查询结果</button>
+        <p id="verify-state" class="caption muted" aria-live="polite">付款后会自动查询到账结果。</p>
+        <hr />
+        <p class="caption muted">以下为原型控制，用于查看支付后状态：</p>
+        <button id="demo-paid">演示：支付已确认，正在入账</button
+        ><button id="demo-completed">演示：服务端确认到账</button>
+      </section>
+      <section id="success-step" class="stack hidden">
+        <div class="wait-area">
+          <span class="wait-icon success">✓</span>
+          <h2>充值已到账</h2>
+          <p class="caption muted" id="success-state">余额正在同步…</p>
+        </div>
+        <button class="primary" id="done">完成</button>
+      </section>
+    </dialog>
+    <div id="toast" role="status" hidden></div>
+    <script>
+      // 离线交互原型：fakeServer 仅模拟服务端，正式实现不得在客户端增减余额。
+      const $ = (s) => document.querySelector(s),
+        $$ = (s) => [...document.querySelectorAll(s)];
+      const fakeServer = { balance: 128.6 },
+        state = {
+          scenario: "normal",
+          loading: false,
+          amount: 30,
+          method: "微信支付",
+          loggedIn: true,
+          paid: false,
+          hasOrder: false,
+          generation: 0,
+        };
+      let toastTimer;
+      const money = (n) => "¥" + n.toFixed(2);
+      function toast(message) {
+        $("#toast").textContent = message;
+        $("#toast").hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => ($("#toast").hidden = true), 3000);
+      }
+      function showAccount() {
+        state.loggedIn = true;
+        $("#account-view").classList.remove("hidden");
+        $("#login-view").classList.add("hidden");
+        $("#mini").classList.remove("hidden");
+        syncBalance();
+      }
+      function showLogin() {
+        state.loggedIn = false;
+        state.generation++;
+        state.loading = false;
+        $$(".sync").forEach((b) => {
+          b.disabled = false;
+          b.classList.remove("spinning");
+        });
+        $("#account-view").classList.add("hidden");
+        $("#login-view").classList.remove("hidden");
+        $("#mini").classList.add("hidden");
+        $("#recharge-dialog").close();
+      }
+      function setStatus(text, warning = false) {
+        $$(".status").forEach((e) => {
+          e.textContent = text;
+          e.classList.toggle("warning", warning);
+        });
+      }
+      async function syncBalance() {
+        if (!state.loggedIn || state.loading) return;
+        state.loading = true;
+        const generation = ++state.generation;
+        $$(".sync").forEach((b) => {
+          b.disabled = true;
+          b.classList.add("spinning");
+          b.setAttribute("aria-label", "正在同步余额");
+        });
+        setStatus("正在同步…");
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        if (generation !== state.generation || !state.loggedIn) return;
+        state.loading = false;
+        $$(".sync").forEach((b) => {
+          b.disabled = false;
+          b.classList.remove("spinning");
+          b.setAttribute("aria-label", "同步余额");
+        });
+        if (state.scenario === "expired") {
+          showLogin();
+          toast("登录已过期，请重新登录");
+          return;
+        }
+        if (state.scenario === "offline") {
+          setStatus("上次余额 · 待同步", true);
+          $("#sync-error").classList.remove("hidden");
+          return;
+        }
+        $("#sync-error").classList.add("hidden");
+        $$(".balance").forEach((e) => (e.textContent = money(fakeServer.balance)));
+        setStatus("更新于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+        $("#success-state").textContent = "当前可用余额 " + money(fakeServer.balance);
+      }
+      function setStep(step) {
+        for (const name of ["choose", "wait", "success"])
+          $("#" + name + "-step").classList.toggle("hidden", name !== step);
+      }
+      function openRecharge() {
+        syncBalance();
+        setStep(state.hasOrder ? "wait" : "choose");
+        $("#recharge-dialog").showModal();
+      }
+      $$(".sync").forEach((b) => b.addEventListener("click", syncBalance));
+      $$(".recharge").forEach((b) => b.addEventListener("click", openRecharge));
+      $("#profile").addEventListener("click", () => {
+        showAccount();
+        toast("已打开账号与余额");
+      });
+      $("#theme").addEventListener("click", () => {
+        const dark = document.documentElement.dataset.theme !== "dark";
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        $("#theme").textContent = dark ? "切换浅色" : "切换深色";
+      });
+      $("#show-login").addEventListener("click", showLogin);
+      $("#logout").addEventListener("click", () => {
+        showLogin();
+        toast("已退出演示账号，本地成果保留");
+      });
+      $("#login-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        state.scenario = "normal";
+        $("#scenario").value = "normal";
+        showAccount();
+      });
+      for (const name of ["register", "forgot"])
+        $("#" + name).addEventListener("click", () =>
+          toast("正式版将在系统浏览器打开自有账户网站；原型不联网"),
+        );
+      $("#scenario").addEventListener("change", () => {
+        state.scenario = $("#scenario").value;
+        $("#frozen").classList.toggle("hidden", state.scenario !== "frozen");
+        if (state.scenario === "expired") {
+          showLogin();
+          toast("演示：登录已过期");
+          return;
+        }
+        fakeServer.balance = state.scenario === "empty" ? 0 : 128.6;
+        state.loggedIn = true;
+        showAccount();
+      });
+      $$("#amounts button").forEach((b) =>
+        b.addEventListener("click", () => {
+          state.amount = Number(b.dataset.amount);
+          $$("#amounts button").forEach((c) => c.classList.toggle("selected", c === b));
+          $("#pay-amount").textContent = money(state.amount);
+          $("#credit-amount").textContent = money(state.amount);
+        }),
+      );
+      $$(".methods button").forEach((b) =>
+        b.addEventListener("click", () => {
+          state.method = b.dataset.method;
+          $$(".methods button").forEach((c) => c.classList.toggle("selected", c === b));
+        }),
+      );
+      $("#close-dialog").addEventListener("click", () => $("#recharge-dialog").close());
+      $("#done").addEventListener("click", () => $("#recharge-dialog").close());
+      $("#create-order").addEventListener("click", () => {
+        if (state.scenario === "offline") {
+          toast("当前网络中断，无法创建订单");
+          return;
+        }
+        state.hasOrder = true;
+        state.paid = false;
+        $("#order-status").textContent = "等待支付";
+        $("#order-amount").textContent = money(state.amount);
+        $("#wait-title").textContent = "使用" + state.method + "扫码支付";
+        $("#verify-state").textContent = "付款后会自动查询到账结果。";
+        setStep("wait");
+      });
+      $("#verify-order").addEventListener("click", () => {
+        $("#verify-state").textContent =
+          state.scenario === "offline"
+            ? "查询失败，请检查网络。"
+            : state.paid
+              ? "支付已确认，正在入账。"
+              : "暂未查询到支付结果。请勿重复付款。";
+        toast("已查询演示订单，未修改余额");
+      });
+      $("#demo-paid").addEventListener("click", () => {
+        state.paid = true;
+        $("#order-status").textContent = "正在入账";
+        $("#verify-state").textContent = "支付已确认，正在入账。";
+        toast("支付确认不会直接增加余额");
+      });
+      $("#demo-completed").addEventListener("click", () => {
+        fakeServer.balance += state.amount;
+        state.hasOrder = false;
+        setStep("success");
+        $("#success-state").textContent =
+          state.scenario === "offline"
+            ? "充值已到账，余额待同步。关闭后可点余额旁箭头重试。"
+            : "余额正在同步…";
+        const tr = document.createElement("tr");
+        for (const text of ["刚刚", money(state.amount), money(state.amount), "已到账"]) {
+          const td = document.createElement("td");
+          td.textContent = text;
+          tr.appendChild(td);
+        }
+        tr.lastElementChild.className = "success";
+        $("#orders").prepend(tr);
+        if (state.loading) {
+          state.generation++;
+          state.loading = false;
+        }
+        syncBalance();
+      });
+      $("#refresh-orders").addEventListener("click", () => toast("已刷新示例充值记录"));
+      syncBalance();
+    </script>
+  </body>
+</html>

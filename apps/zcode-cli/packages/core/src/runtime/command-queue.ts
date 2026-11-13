@@ -1,5 +1,6 @@
 import type { TraceContext, TurnState } from "./deps.js";
 import type { BackgroundResultOriginMeta, WorkflowLaunchMeta } from "@zcode/contracts";
+import { sameManagedBillingBinding, type ManagedBillingBinding } from "@zcode/shared";
 import type {
   ActiveTurnStartReservation,
   ContinueActiveTargetLoopOptions,
@@ -20,6 +21,7 @@ export type RuntimeCommandId = string & {
 };
 
 export interface RuntimeCommandBase {
+  readonly billingBinding?: ManagedBillingBinding;
   readonly offPeakExecutionId?: string;
   readonly createdAt: Date;
   readonly id: RuntimeCommandId;
@@ -191,19 +193,16 @@ export function createRuntimeCommandQueue(): RuntimeCommandQueue {
         return Object.freeze(command ? [command] : []);
       }
 
-      const batch = commands.filter(
-        (command) =>
-          command.mode === "task-notification" &&
-          command.priority === selected.priority &&
-          command.offPeakExecutionId === selected.offPeakExecutionId,
-      );
+      const belongsToSelectedBatch = (command: RuntimeCommand): boolean =>
+        command.mode === "task-notification" &&
+        command.priority === selected.priority &&
+        command.offPeakExecutionId === selected.offPeakExecutionId &&
+        (command.billingBinding === selected.billingBinding ||
+          sameManagedBillingBinding(command.billingBinding, selected.billingBinding));
+      const batch = commands.filter(belongsToSelectedBatch);
       for (let commandIndex = commands.length - 1; commandIndex >= 0; commandIndex -= 1) {
         const command = commands[commandIndex];
-        if (
-          command?.mode === "task-notification" &&
-          command.priority === selected.priority &&
-          command.offPeakExecutionId === selected.offPeakExecutionId
-        ) {
+        if (command && belongsToSelectedBatch(command)) {
           commands.splice(commandIndex, 1);
         }
       }

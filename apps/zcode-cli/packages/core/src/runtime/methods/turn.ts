@@ -147,6 +147,15 @@ export async function executeTurnCommand(
   // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
   const offPeakTurn = prepareOffPeakTurn(this, options);
   options = offPeakTurn.options;
+  // 原因：结束时当前账号/目录可能已变化，只反馈本轮开始前冻结的原扣费归属。
+  const originalBillingBinding =
+    options?.intent?.billingBinding ??
+    options?.modelExecution?.requestDependencies?.billingBinding ??
+    this.activeForegroundExecution?.billingBinding ??
+    this.providerRuntimeHeadersPort?.billingBinding;
+  const settledBillingBinding = originalBillingBinding
+    ? structuredClone(originalBillingBinding)
+    : undefined;
   const admittedModelSelection =
     options?.intent?.modelSelection ??
     (options && "executionSelection" in options
@@ -256,7 +265,14 @@ export async function executeTurnCommand(
       throwIfTurnAborted(turnAbortSignal);
       let admittedModel: Model | undefined;
       let effectiveExecutionSelection = admittedModelSelection;
-      let effectiveRequestDependencies = options?.modelExecution?.requestDependencies;
+      let effectiveRequestDependencies:
+        | import("@zcode/contracts").ModelRequestDependencies
+        | undefined = {
+        ...options?.modelExecution?.requestDependencies,
+        ...(options?.intent?.billingBinding
+          ? { billingBinding: options.intent.billingBinding }
+          : {}),
+      };
       let creationFallback:
         | {
             reason: "highspeed_selection_unavailable";
@@ -272,7 +288,7 @@ export async function executeTurnCommand(
         admittedModel =
           rewindCommand === null
             ? createTurnModel(this, {
-                requestDependencies: options?.modelExecution?.requestDependencies,
+                requestDependencies: effectiveRequestDependencies,
                 selection: admittedModelSelection,
                 // 带退回声明的执行句柄 0 次重试：失败立刻交给 turn step 退回会话模型。
                 retryBudget: resolveExecutionModelRetryBudget({
@@ -1135,6 +1151,17 @@ export async function executeTurnCommand(
     );
 
   return turnTelemetry.run(execute).finally(async () => {
+    if (settledBillingBinding) {
+      try {
+        this.providerRuntimeHeadersPort?.reportManagedOutcome?.({
+          outcome: { kind: "turn_settled", billingBinding: settledBillingBinding },
+          sessionId: this.sessionId,
+          traceContext: turnTraceContext,
+        });
+      } catch {
+        /* 私有展示同步失败不能覆盖既有turn成功/错误或取消结果。 */
+      }
+    }
     disposeProjectMemoryRecallPrefetch(this);
     if (targetRunHeartbeat) {
       clearInterval(targetRunHeartbeat);

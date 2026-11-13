@@ -176,7 +176,7 @@ function waitForCuaApplicationReturn({
     };
     const onBlur = () => {
       latestBlurSequence = ++applicationEventSequence;
-      // pre-open 的 lsappinfo 查询可能已经采到 ZCode，却卡在第二个 info 子进程。
+      // pre-open 的 lsappinfo 查询可能已经采到 MiloCode，却卡在第二个 info 子进程。
       // 若复用全局 single-flight，Settings 打开并快速返回的完整 round-trip 会落入盲窗。blur 边沿
       // 必须强制启动一份时间绑定的并行采样；普通 150ms 轮询仍保持 single-flight，避免无界并发。
       inspectFrontmost(true);
@@ -190,13 +190,13 @@ function waitForCuaApplicationReturn({
       inspectFrontmost();
       maybeFinishReturn();
     };
-    const onQuit = () => finish(new Error("ZCode quit during CUA permission onboarding"));
+    const onQuit = () => finish(new Error("MiloCode quit during CUA permission onboarding"));
     const onAbort = () =>
       finish(signal.reason ?? new Error("CUA permission onboarding origin window closed"));
     observationTimer = setTimeout(
       () =>
         finish(
-          new Error(`System Settings did not return to ZCode within ${Math.max(1, timeoutMs)}ms`),
+          new Error(`System Settings did not return to MiloCode within ${Math.max(1, timeoutMs)}ms`),
         ),
       Math.max(1, timeoutMs),
     );

@@ -321,6 +321,7 @@ export interface ConversationEditTarget {
   transcriptMessageId: string;
   coveredByStableCompact: boolean;
   intent: {
+    billingBinding?: TurnInputIntentMetadata["billingBinding"];
     inputOrigin?: "desktop" | "mobile";
     genUiContext?: import("@zcode/contracts").TurnInputIntentMetadata["genUiContext"];
     conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
@@ -2228,6 +2229,7 @@ export class ProductProjection {
               transcriptMessageId: fact.transcriptMessageId,
               coveredByStableCompact: false,
               intent: {
+                ...(fact.billingBinding ? { billingBinding: fact.billingBinding } : {}),
                 kind: fact.intentKind,
                 text: fact.intentText,
                 genUiContext: fact.genUiContext,
@@ -3771,6 +3773,7 @@ export class ProductProjection {
       // QueueItem 同时是提升执行的输入，不只是 UI 展示；漏字段会让新 Turn 沿用旧权限／模型。
       // 旧的正文编辑事件可能没有 intent，只能保留同项原事实，不能读取当前 Session 补值。
       modelSelection: payload.intent?.modelSelection ?? existing?.modelSelection,
+      billingBinding: payload.intent?.billingBinding ?? existing?.billingBinding,
       mode: payload.intent?.mode ?? existing?.mode,
       planEnabled: payload.intent?.planEnabled ?? existing?.planEnabled,
       sharedContextRefs: payload.intent?.sharedContextRefs ?? existing?.sharedContextRefs,
@@ -4031,6 +4034,9 @@ export class ProductProjection {
                   : {}),
                 ...(item.intent?.modelSelection
                   ? { modelSelection: item.intent.modelSelection }
+                  : {}),
+                ...(item.intent?.billingBinding
+                  ? { billingBinding: item.intent.billingBinding }
                   : {}),
                 ...(item.intent?.mode ? { mode: item.intent.mode } : {}),
                 ...(item.intent?.planEnabled !== undefined

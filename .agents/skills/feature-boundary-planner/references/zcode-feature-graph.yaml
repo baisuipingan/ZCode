@@ -17,6 +17,78 @@ rules:
     - "evidence-only"
 
 nodes:
+  - id: "capability.brand-managed-inference"
+    kind: "capability"
+    label: "Brand Desktop account-managed inference"
+    aliases: ["品牌托管推理", "sub2api", "desktop bootstrap", "Agent托管Key", "Agent 模型列表刷新"]
+    docs:
+      [
+        "docs/fork/14-managed-agent-inference-spec.md",
+        "docs/fork/15-managed-agent-inference-cases.md",
+        "docs/fork/18-agent-model-refresh-design.md",
+      ]
+    codeSeeds:
+      - file: "packages/services/src/brand-account/inferenceBootstrap.ts"
+        symbol: "parseInferenceBootstrap"
+      - file: "packages/provider/src/resolver.ts"
+        symbol: "resolveManagedProviderPolicy"
+    invariants:
+      - "Desktop local only; each user has an independent Agent purpose key and can share the workbench composite group and account balance."
+      - "Managed blocked means an empty Registry; Personal, official account and environment keys never supply a fallback."
+      - "Configured is a Host projection; an executing target CLI must acknowledge appliedRevision and managedReady."
+      - "The Agent model catalog controls the desktop selection and execution set; it does not add a gateway model ACL to the user's managed key."
+  - id: "surface.brand-managed-connection"
+    kind: "ui-surface"
+    label: "Brand account Agent connection and reconnect"
+    codeSeeds:
+      - file: "packages/ui/src/brand-account/BrandInferenceStatus.tsx"
+        symbol: "BrandInferenceStatus"
+    invariants:
+      - "Reconnect uses the existing initialize command; no login or inference secret enters public RPC."
+  - id: "surface.brand-managed-new-task"
+    kind: "ui-surface"
+    label: "Brand new task submission"
+    codeSeeds:
+      - file: "packages/ui/src/v4/ConversationComposer.tsx"
+    invariants:
+      - "Draft remains in UI until original command admission; the managed policy owns the complete initial model selection."
+  - id: "surface.brand-managed-session-input"
+    kind: "ui-surface"
+    label: "Brand existing conversation input and queue promotion"
+    codeSeeds:
+      - file: "packages/ui/src/v4/SessionPane.tsx"
+      - file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts"
+        symbol: "createConversationV4Gateway"
+    invariants:
+      - "CLI admission freezes the billing binding; an old or missing binding never silently charges a new account."
+      - "Read-only history and cancellation remain available while inference is blocked."
+  - id: "state.brand-managed-host"
+    kind: "state-owner"
+    label: "Local Host private brand account and inference coordinator"
+    codeSeeds:
+      - file: "packages/services/src/brand-account/service.ts"
+        symbol: "createBrandAccountService"
+      - file: "packages/services/src/brand-account/managedInference.ts"
+        symbol: "createManagedInference"
+      - file: "packages/desktop/src/host/windowHostAttachmentRpcPolicy.ts"
+        symbol: "createBrandInferenceAdmissionChannelServer"
+    invariants:
+      - "Login pairs use the shared OS-encrypted repository; inference keys remain in Host memory and are resolved through a private per-attempt port."
+      - "Account intent barriers precede lock waits; stale bootstrap or decryption cannot restore an invalidated authorization."
+  - id: "service.brand-managed-attempt"
+    kind: "service"
+    label: "Managed model creation and physical-attempt authorization"
+    codeSeeds:
+      - file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
+        symbol: "createZCodeAgentService"
+      - file: "apps/zcode-cli/packages/adapters/src/model/runner.ts"
+        symbol: "AiSdkModelAdapter"
+      - file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/account-provider-config.ts"
+    invariants:
+      - "Main, child and auxiliary work retain their original billing binding; every physical attempt resolves current authorization."
+      - "Policy invalidation closes resident execution through the existing session lifecycle without deleting persistent input or queue."
+      - "Only the trusted account origin /v1 endpoint is accepted; managed HTTP requests reject redirects."
+
   - id: "capability.shared-task-cli"
     kind: "capability"
     label: "Local projectless workspaces share one chat CLI"
@@ -5565,6 +5637,36 @@ nodes:
         file: "packages/ui/src/v4/ConversationShareReadonlyTimeline.tsx"
 
 edges:
+  - from: "capability.brand-managed-inference"
+    to: "surface.brand-managed-connection"
+    type: "renders-in"
+    rank: "must-inspect"
+  - from: "capability.brand-managed-inference"
+    to: "surface.brand-managed-new-task"
+    type: "renders-in"
+    rank: "must-inspect"
+  - from: "capability.brand-managed-inference"
+    to: "surface.brand-managed-session-input"
+    type: "renders-in"
+    rank: "must-inspect"
+  - from: "capability.brand-managed-inference"
+    to: "state.brand-managed-host"
+    type: "depends-on"
+    rank: "must-inspect"
+  - from: "capability.brand-managed-inference"
+    to: "service.brand-managed-attempt"
+    type: "commits-through"
+    rank: "must-inspect"
+  - from: "capability.brand-managed-inference"
+    to: "capability.model-selection"
+    type: "depends-on"
+    rank: "must-inspect"
+    condition: "Managed policy supplies one complete default; historical choices and original intents are not rewritten."
+  - from: "capability.brand-managed-inference"
+    to: "boundary.web-remote-replayable"
+    type: "must-remain-isolated-from"
+    rank: "invariant-only"
+    condition: "A local Desktop account never grants credentials to mobile or remote attachments."
   - from: "capability.shared-task-cli"
     to: "capability.workspace-identity"
     type: "preserves"

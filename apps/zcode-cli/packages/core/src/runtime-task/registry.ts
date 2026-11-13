@@ -6,6 +6,7 @@ import type {
   TurnId,
 } from "@zcode/contracts";
 import type { AgentOutput } from "@zcode/contracts";
+import type { ManagedBillingBinding } from "@zcode/shared";
 
 // local_dynamic_workflow 与 local_workflow 刻意分开：后者是 legacy `Workflow` 工具（不可取消），
 // 前者是 workflow run（经 DynamicWorkflowRunPort.cancel 可取消）。合成一个类型，取消分派就无法区分。
@@ -41,6 +42,8 @@ export interface RuntimeTaskMessageSink {
 }
 
 export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
+  /** 任务创建轮的扣费归属；显式 undefined 表示普通 API，完成时不得借当前账户补签。 */
+  billingBinding?: ManagedBillingBinding;
   /** 内存执行归属；重启不会恢复闲时后台任务。 */
   offPeakExecutionId?: string;
   offPeakCancelled?: boolean;
@@ -72,6 +75,9 @@ export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
 
 export interface RuntimeTaskRegistry {
   subscribe?(listener: () => void): () => void;
+  setBillingBindingSource?(
+    source: () => { billingBinding?: ManagedBillingBinding } | undefined,
+  ): void;
   setOffPeakExecutionId?(executionId: string | undefined): void;
   all(): Record<string, RuntimeTaskSnapshot>;
   get(id: string): RuntimeTaskSnapshot | undefined;
@@ -112,6 +118,9 @@ const TERMINAL_STATUSES = new Set<RuntimeTaskSnapshot["status"]>([
 ]);
 
 export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
+  private billingBindingSource:
+    | (() => { billingBinding?: ManagedBillingBinding } | undefined)
+    | undefined;
   private offPeakExecutionId: string | undefined;
   private readonly listeners = new Set<() => void>();
   subscribe(listener: () => void): () => void {
@@ -123,6 +132,11 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
   setOffPeakExecutionId(executionId: string | undefined): void {
     this.offPeakExecutionId = executionId;
   }
+  setBillingBindingSource(
+    source: () => { billingBinding?: ManagedBillingBinding } | undefined,
+  ): void {
+    this.billingBindingSource = source;
+  }
   private changed(): void {
     for (const listener of this.listeners) listener();
   }
@@ -132,8 +146,18 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
   private readonly terminalWaiters = new Map<string, Set<RuntimeTaskWaiter>>();
 
   register(task: RuntimeTaskSnapshot): void {
+    // 显式普通 API admission（scope 存在、binding 缺省）不同于 idle GUI 恢复（没有 scope）。
+    // 后者只可延续同 task 原归属，不能到当前账户补签；rollback 快照的 undefined 也保持原样。
+    const creationScope = this.billingBindingSource?.();
+    const billingBinding =
+      "billingBinding" in task
+        ? task.billingBinding
+        : creationScope
+          ? creationScope.billingBinding
+          : this.tasks.get(task.taskId)?.billingBinding;
     const stamped = {
       ...task,
+      billingBinding: billingBinding ? structuredClone(billingBinding) : undefined,
       ...((task.offPeakExecutionId ?? this.offPeakExecutionId)
         ? { offPeakExecutionId: task.offPeakExecutionId ?? this.offPeakExecutionId }
         : {}),
@@ -155,7 +179,7 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
   ): RuntimeTaskSnapshot | undefined {
     const current = this.tasks.get(id);
     if (!current) return undefined;
-    const next = patcher(current);
+    const next = { ...patcher(current), billingBinding: current.billingBinding };
     this.tasks.set(id, next);
     this.resolveIfTerminal(id, next);
     this.resolveIfBackgrounded(id, next);

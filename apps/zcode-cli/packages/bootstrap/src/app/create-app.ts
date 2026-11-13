@@ -699,6 +699,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             concurrency: workflowConcurrencyGovernor,
             createActorRuntime: ({
               actor,
+              billingScope,
               persona,
               pinnedModel,
               runSubagentModel,
@@ -711,6 +712,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               modelRequestAdmission,
             }) =>
               createScriptWorkflowAgentRuntime({
+                billingScope,
                 childSessionId: actorSessionId,
                 configOverrides: {
                   // persona 的身份（有效名 + system）→ context builder 的工作流子代理路径。
@@ -821,6 +823,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             // 建 run 那一刻会话的权限模式（记进 run-launched，子代理随之）。
             // 惰性同 onRunEvent：启动只来自工具调用或 v4 命令，那时 runtime 必已就绪。
             permissionMode: () => getRuntime().getMode(),
+            captureBillingScope: (trace) => {
+              // 只有发起工具所属的活动轮能提供 admission；GUI/旧回调不能借别的付费轮。
+              const owner = getRuntime();
+              const active = owner.getActiveTurnInfo();
+              return active !== undefined && active.turnId === trace.turnId
+                ? owner.captureBillingScope()
+                : undefined;
+            },
             // 在飞的引擎把本会话钉成常驻。2026-09-15 的 bug：引擎不进 runtime task registry，
             // 常驻池把带着在飞 run 的 App 按 idle（10 分钟）关掉，resume 又起了第二个引擎。
             // 惰性取 runtime 同 onRunEvent：run service 是 AgentRuntime 的依赖，构造更早；
@@ -1073,7 +1083,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           }),
       configResult,
       configuredMcpServers,
-      ...(options.configuredDefaultModelSelection
+      ...(options.configuredDefaultModelSelection !== undefined
         ? {
             configuredDefaultModelSelection: options.configuredDefaultModelSelection,
           }

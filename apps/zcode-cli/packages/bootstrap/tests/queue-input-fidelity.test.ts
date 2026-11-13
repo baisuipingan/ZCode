@@ -9,6 +9,12 @@ import { ProductProjection } from "../src/zcode-protocol-v4/index.js";
 import { inputIntentMetadataFromQueueItem } from "../src/zcode-protocol-v4/commands/input-intent.js";
 
 const intent: TurnInputIntentMetadata = {
+  billingBinding: {
+    origin: "https://account.example",
+    accountRef: "user:A",
+    accountEpoch: 1,
+    policyRevision: "policy:A",
+  },
   sourceCommandId: "source-command",
   queueItemId: "queued-input",
   clientId: "desktop-client",
@@ -79,6 +85,21 @@ describe("Todo151 Queue 提交事实往返", () => {
       expect(inputIntentMetadataFromQueueItem(item, item.text)).toEqual(submitted);
     },
   );
+
+  it("普通 TurnStarted 经 canonical row resolver 保留原扣费绑定", () => {
+    const projection = new ProductProjection("session", "epoch");
+    const event = queuedEvent(1, intent);
+    projection.applyEvent({
+      ...event,
+      type: SessionEventType.TurnStarted,
+      payload: { turnNumber: 1, input: intent.text, messageId: "user-message", intent },
+    } as SessionEvent);
+    const row = projection.getSnapshot().rows.window.find((entry) => entry.kind === "userInput");
+    expect(row).toBeDefined();
+    expect(projection.resolveEditTarget(row!.rowId)?.intent.billingBinding).toEqual(
+      intent.billingBinding,
+    );
+  });
 
   it("只带正文的旧编辑事件保留同项原选择、上下文和来源", () => {
     const projection = new ProductProjection("session", "epoch");

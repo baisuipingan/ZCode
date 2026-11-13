@@ -187,13 +187,14 @@ function toModelOption(provider: Provider, model: ProviderModel): ZCodeModelOpti
   const reasoning = optionSpecs.reasoningLevel;
   return {
     ref: { providerId: provider.providerId, modelId: model.modelId },
-    label: model.modelId,
+    label: model.displayName ?? model.modelId,
     providerLabel: provider.providerName ?? provider.providerId,
     contextWindow: properties.contextWindow,
     maxOutputTokens: optionSpecs.maxOutputTokens.max,
     reasoning: {
       levels: reasoning.values.map((level) => ({ value: level, label: level })),
-      defaultLevel: reasoning.values.at(-1),
+      // 原因：每个受管模型均有独立默认档位；旧供应商缺省时才沿用最高档。
+      defaultLevel: reasoning.defaultLevel ?? reasoning.values.at(-1),
     },
     properties: {
       inputFormat: properties.inputFormat,

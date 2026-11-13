@@ -14,6 +14,7 @@ export function useAccountConnectionLossNotification(
   services: IServiceAccessor,
   intentKey: string,
   refreshAppSettings?: () => Promise<void>,
+  enabled = true,
 ) {
   const { intl } = useZCodeIntl();
   const latest = useRef({ intl, refreshAppSettings });
@@ -29,6 +30,7 @@ export function useAccountConnectionLossNotification(
     noticeRef.current = null;
   }, [intentKey]);
   useEffect(() => {
+    if (!enabled) return;
     const observer = createAccountConnectionRefreshObserver(async (event) => {
       let suggestion: Awaited<ReturnType<typeof prepareAccountConnectionSwitch>> = null;
       try {
@@ -74,7 +76,9 @@ export function useAccountConnectionLossNotification(
               logger.lifecycle.warn("[AccountConnection] 连接已保存，设置快照刷新失败", { error });
             }
           } catch (error) {
-            logger.lifecycle.warn("[AccountConnection] 手动切换套餐失败", { error });
+            logger.lifecycle.warn("[AccountConnection] 手动切换套餐失败", {
+              error,
+            });
             if (!event.isCurrent()) return;
             // Toast 点击会自动关闭。失败时给同一建议的显式重试，不能后台选新目标。
             id = toast(
@@ -84,7 +88,9 @@ export function useAccountConnectionLossNotification(
               {
                 variant: "warning",
                 durationMs: 12000,
-                actionLabel: latest.current.intl.formatMessage({ id: "common.retry" }),
+                actionLabel: latest.current.intl.formatMessage({
+                  id: "common.retry",
+                }),
                 onAction: submit,
               },
             );
@@ -94,17 +100,22 @@ export function useAccountConnectionLossNotification(
           }
         })();
       };
-      id = toast(copy.formatMessage({ id: "settings.modelProvider.connectionUnavailableNotice" }), {
-        variant: "info",
-        durationMs: 12000,
-        actionLabel: target
-          ? copy.formatMessage(
-              { id: "settings.modelProvider.switchConnection" },
-              { connection: label },
-            )
-          : undefined,
-        onAction: target ? submit : undefined,
-      });
+      id = toast(
+        copy.formatMessage({
+          id: "settings.modelProvider.connectionUnavailableNotice",
+        }),
+        {
+          variant: "info",
+          durationMs: 12000,
+          actionLabel: target
+            ? copy.formatMessage(
+                { id: "settings.modelProvider.switchConnection" },
+                { connection: label },
+              )
+            : undefined,
+          onAction: target ? submit : undefined,
+        },
+      );
       noticeRef.current = { id, event };
     });
     observerRef.current = observer;
@@ -130,5 +141,5 @@ export function useAccountConnectionLossNotification(
       if (noticeRef.current) dismissToast(noticeRef.current.id);
       noticeRef.current = null;
     };
-  }, [services]);
+  }, [enabled, services]);
 }

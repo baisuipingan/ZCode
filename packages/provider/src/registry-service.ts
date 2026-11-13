@@ -7,6 +7,7 @@ import {
 } from "./registry.js";
 import {
   ProviderConfigResolver,
+  resolveManagedProviderPolicy,
   type ProviderConfigResolution,
   type Provider,
   type ProviderModel,
@@ -202,7 +203,10 @@ export class ProviderRegistryService {
       if (generation < this.#requestedGeneration) continue;
       this.#assertNotDisposed();
 
-      if (account.basedOnZCodeBuiltinRevision !== config.zcodeBuiltinRevision) {
+      if (
+        !account.managedPolicy &&
+        account.basedOnZCodeBuiltinRevision !== config.zcodeBuiltinRevision
+      ) {
         // Built-in 已变化但 Account 仍基于旧事实时，继续服务上一份完整 Registry。
         // 当前 generation 结束；等待 Account Source 的后续 change 再一次性发布最终组合。
         this.#completedGeneration = generation;
@@ -219,16 +223,18 @@ export class ProviderRegistryService {
       }
 
       try {
-        const resolution = this.#resolver.resolve({
-          zcodeBuiltinProviders: config.zcodeBuiltinProviders,
-          zcodeBuiltinProviderTemplates: config.zcodeBuiltinProviderTemplates,
-          personalProviders: config.personalProviders,
-          zcodeBuiltinModelRules: config.zcodeBuiltinModelRules,
-          personalModels: config.personalModels,
-          accountProviders: account.providers,
-          accountStates: account.states,
-          personalProviderOrder: config.personalProviderOrder,
-        });
+        const resolution = account.managedPolicy
+          ? resolveManagedProviderPolicy(account.managedPolicy)
+          : this.#resolver.resolve({
+              zcodeBuiltinProviders: config.zcodeBuiltinProviders,
+              zcodeBuiltinProviderTemplates: config.zcodeBuiltinProviderTemplates,
+              personalProviders: config.personalProviders,
+              zcodeBuiltinModelRules: config.zcodeBuiltinModelRules,
+              personalModels: config.personalModels,
+              accountProviders: account.providers,
+              accountStates: account.states,
+              personalProviderOrder: config.personalProviderOrder,
+            });
         this.#registry.replace(resolution.registryProviders, [...reasons].join(","));
         const snapshot = Object.freeze({
           sourceRevisions: Object.freeze({
@@ -310,6 +316,7 @@ function freezeAccountSnapshot(
     revision: snapshot.revision,
     basedOnZCodeBuiltinRevision: snapshot.basedOnZCodeBuiltinRevision,
     providers: snapshot.providers,
+    ...(snapshot.managedPolicy ? { managedPolicy: structuredClone(snapshot.managedPolicy) } : {}),
     ...(snapshot.states ? { states: snapshot.states } : {}),
   });
 }

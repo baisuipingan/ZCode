@@ -61,6 +61,12 @@ const BASE_SETTINGS_SECTION_GROUPS: Array<{
 
 const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   {
+    id: "account",
+    icon: User,
+    titleId: "brandAccount.accountUsageTitle",
+    groupId: "basics",
+  },
+  {
     id: "general",
     icon: Settings2,
     titleId: "settings.systemTitle",
@@ -209,25 +215,37 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 // 兼容既有只读消费者：默认配置代表不带桌面平台能力的 Web 视图；
 // macOS/Windows/Linux 必须继续通过 createSettingsPageConfig 动态加入 Computer Use。
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "account" &&
+    section.id !== "computerUse" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
+  brandAccountEnabled?: boolean;
   isDesktop?: boolean;
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;
 }
 
 export function createSettingsPageConfig({
+  brandAccountEnabled = false,
   isDesktop = false,
   isMacDesktop = false,
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
+    if (section.id === "account") return brandAccountEnabled;
+    if (brandAccountEnabled && section.id === "modelProvider") return false;
     if (section.id === "computerUse" && !showComputerUse) return false;
     return isSettingsSectionEnabled(section.id);
-  });
+  }).map((section) =>
+    // 品牌账户消费来自服务端，旧统计来自本地；名称必须区分，普通模式仍用原标题。
+    brandAccountEnabled && section.id === "usage"
+      ? { ...section, titleId: "settings.localUsageTitle" }
+      : section,
+  );
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({
     ...group,
     sections: settingsSections.filter((section) => section.groupId === group.id),

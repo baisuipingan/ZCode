@@ -91,6 +91,9 @@ export interface ModelSelectFooterAction {
   key: string;
   label: string;
   selected?: boolean;
+  icon?: ReactNode;
+  disabled?: boolean;
+  keepOpen?: boolean;
   onSelect?: () => void;
 }
 
@@ -183,6 +186,7 @@ interface ModelConfigSelectProps {
   /** 覆盖 provider 二级模型菜单样式；缺省按内容扩展并保留最小宽度。 */
   providerSubmenuClassName?: string;
   footerActions?: readonly ModelSelectFooterAction[];
+  footerStatus?: ReactNode;
   manageModelsLabel?: string;
   onManageModels?: () => void;
   focusSelectorOnClose?: string | null;
@@ -233,6 +237,7 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   showProviderLevel,
   providerSubmenuClassName,
   footerActions = EMPTY_MODEL_SELECT_FOOTER_ACTIONS,
+  footerStatus,
   manageModelsLabel,
   onManageModels,
   focusSelectorOnClose = '[data-testid="chat-input"]',
@@ -263,11 +268,14 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
     triggerLabel = previous.triggerLabel;
   } else presentation.current = { composerOptions, modelGroups, normalizedValue, triggerLabel };
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [expandedWidth, setExpandedWidth] = useState<number | null>(null);
   const hasSelectedModel = Boolean(normalizedValue.trim());
-  const showSelectionLabel = Boolean(composerOptions && open && hasSelectedModel);
+  const showSelectionLabel = Boolean(
+    composerOptions && !composerOptions.keepTriggerLabel && open && hasSelectedModel,
+  );
   // 未选模型不代表缺失思考档位；空态不应显示横线、绿条或 Tooltip 的伪档位。
   const selectedThoughtLabel = hasSelectedModel
     ? composerOptions?.levels.find((level) => level.value === composerOptions.value)?.label
@@ -293,6 +301,7 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
 
   const handlePopoverOpenChange = useCallback(
     (nextOpen: boolean) => {
+      if (nextOpen) setTooltipOpen(false);
       // 打开前测量真实按钮，不能在替换文案后反过来测量占位内容。
       if (nextOpen && composerOptions && buttonRef.current)
         setExpandedWidth(buttonRef.current.getBoundingClientRect().width);
@@ -652,7 +661,10 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
           shortcut={guideTooltipOpen ? undefined : shortcutLabel}
           triggerRef={triggerRef}
           // 菜单打开时 Tooltip 不能再成为最上层；否则 Escape 只关闭提示，菜单仍锁住指针。
-          open={open ? false : guideTooltipOpen ? true : undefined}
+          // 原因：undefined/false 随菜单开关切换会让 Radix 反复跨受控边界。
+          // hover 状态只用于展示；菜单打开时关闭提示，guide 仍保持原有优先级。
+          open={!open && (guideTooltipOpen || tooltipOpen)}
+          onOpenChange={setTooltipOpen}
           className={guideTooltipOpen ? "bg-background py-0.5 pr-0.5 pl-2" : undefined}
         >
           {modelTrigger}
@@ -804,15 +816,19 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
                   className="min-h-8 gap-2 px-2"
                   data-model-footer-action={action.key}
                   data-model-footer-action-selected={action.selected ? "true" : undefined}
-                  onSelect={() => {
-                    handlePopoverOpenChange(false);
+                  disabled={action.disabled}
+                  onSelect={(event) => {
+                    if (action.keepOpen) event.preventDefault();
+                    else handlePopoverOpenChange(false);
                     action.onSelect?.();
                   }}
                 >
+                  {action.icon}
                   <span className="min-w-0 flex-1 truncate">{action.label}</span>
                   {action.selected ? <CheckIcon className="size-4 text-foreground-subtle" /> : null}
                 </DropdownMenuItem>
               ))}
+              {footerStatus}
             </div>
           ) : null}
         </DropdownMenuContent>

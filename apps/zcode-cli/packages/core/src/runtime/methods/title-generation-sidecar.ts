@@ -45,7 +45,16 @@ export function retainTitleModelContext(
   // 独立标题遵循自己的配置；未归属闲时执行的调用不能借用临时 Session 闲时模型。
   const selection =
     explicitSelection ?? (idle ? execution.ordinarySelection : runtime.getSessionModelSelection());
-  return { selection: selection && cloneModelSelection(selection), release() {} };
+  const billingBinding =
+    runtime.activeForegroundExecution?.billingBinding ??
+    runtime.providerRuntimeHeadersPort?.billingBinding;
+  return {
+    selection: selection && cloneModelSelection(selection),
+    ...(billingBinding
+      ? { requestDependencies: { billingBinding: structuredClone(billingBinding) } }
+      : {}),
+    release() {},
+  };
 }
 
 export const SESSION_TITLE_QUERY_SOURCE = "session_title";

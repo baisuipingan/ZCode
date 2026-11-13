@@ -12,6 +12,7 @@ import {
   type AgentRuntimeDeps,
   type ChildClientPortsContext,
   type PermissionService,
+  type RuntimeBillingScope,
 } from "@zcode/core";
 import {
   type AgentExecutionTelemetryPort,
@@ -69,6 +70,7 @@ export interface ScriptWorkflowAgentRuntimeDeps {
 }
 
 export function createScriptWorkflowAgentRuntime(input: {
+  billingScope?: RuntimeBillingScope;
   childSessionId: SessionId;
   deps: ScriptWorkflowAgentRuntimeDeps;
   request: WorkflowAgentCallInput;
@@ -156,23 +158,29 @@ export function createScriptWorkflowAgentRuntime(input: {
       ...input.configOverrides,
     },
     {
-      ...createRuntimeDeps(input.deps, input.traceContext, input.childSessionId, {
-        // 对外交互端口只能由父 runtime 铸造：子会话不是客户端认识的身份。
-        // 这里过去直接用 `appOptions.providerRuntimeHeadersPort` /
-        // `deps.permissionBroker`，于是 actor 带着 `sess_dwf-…` 去问桌面，桌面
-        // `requireSession` 抛错、response 永不发出，子代理在首个模型请求前挂死。
-        agentId: input.childSessionId,
-        agentType: input.request.opts?.agentType ?? "zcode-workflow",
-        childSessionId: input.childSessionId,
-        description:
-          input.interactionDescription ??
-          input.request.opts?.label ??
-          input.request.opts?.agentType ??
-          "workflow agent",
-        ...(input.traceContext.turnId === undefined
-          ? {}
-          : { parentTurnId: input.traceContext.turnId }),
-      }),
+      ...createRuntimeDeps(
+        input.deps,
+        input.traceContext,
+        input.childSessionId,
+        {
+          // 对外交互端口只能由父 runtime 铸造：子会话不是客户端认识的身份。
+          // 这里过去直接用 `appOptions.providerRuntimeHeadersPort` /
+          // `deps.permissionBroker`，于是 actor 带着 `sess_dwf-…` 去问桌面，桌面
+          // `requireSession` 抛错、response 永不发出，子代理在首个模型请求前挂死。
+          agentId: input.childSessionId,
+          agentType: input.request.opts?.agentType ?? "zcode-workflow",
+          childSessionId: input.childSessionId,
+          description:
+            input.interactionDescription ??
+            input.request.opts?.label ??
+            input.request.opts?.agentType ??
+            "workflow agent",
+          ...(input.traceContext.turnId === undefined
+            ? {}
+            : { parentTurnId: input.traceContext.turnId }),
+        },
+        input.billingScope,
+      ),
       ...(input.browserControlPort === undefined
         ? {}
         : {
@@ -199,6 +207,7 @@ function createRuntimeDeps(
   traceContext: TraceContext,
   childSessionId: SessionId,
   clientPortsContext: ChildClientPortsContext,
+  billingScope?: RuntimeBillingScope,
 ): ConstructorParameters<typeof AgentRuntime>[2] {
   return {
     agentTelemetry: deps.agentTelemetry,
@@ -265,7 +274,7 @@ function createRuntimeDeps(
     modelFactory: deps.modelFactory,
     resolveEffectiveModelSelection: deps.appOptions.resolveEffectiveModelSelection,
     // permissionBroker + providerRuntimeHeadersPort 都在这里面：父 runtime 派生，路由身份已改写成父会话。
-    ...deps.runtime.createChildClientPorts(clientPortsContext),
+    ...deps.runtime.createChildClientPorts(clientPortsContext, billingScope),
     permissionService: deps.permissionService,
     sessionStore: deps.sessionStore,
     skillPort: createWorkflowChildSkillPort(deps),

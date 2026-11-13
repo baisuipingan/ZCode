@@ -39,6 +39,7 @@
 //      接线错误，不该让 contracts 的拒绝枚举为它变宽（同不变式 1 的论证）。
 
 import type { DwfRunSessionListItem } from "@zcode/adapters/storage";
+import type { RuntimeBillingScope } from "@zcode/core";
 import type {
   CollaborationMode,
   TraceContext,
@@ -145,6 +146,8 @@ const MAX_LIST_RUNS_LIMIT = 64;
 /** actor runtime 工厂的输入。runId 在内，因为会话 id 与 task link 都要 run 作用域。 */
 export interface DynamicWorkflowActorRuntimeInput {
   runId: string;
+  /** run 启动时冻结的内存归属；无 binding 也显式传 scope，禁止迟到 actor 借当前父轮。 */
+  billingScope?: RuntimeBillingScope;
   sessionId: SessionId;
   actor: ActorRef;
   persona: PersonaSpec;
@@ -197,6 +200,8 @@ export interface DynamicWorkflowActorRuntimeInput {
 }
 
 export interface DynamicWorkflowRunServiceDeps {
+  /** 在 submit/amend 首个 await 前同步捕获；resume 同 run 只沿原条目，不读取当前父轮。 */
+  captureBillingScope?: (trace: TraceContext) => RuntimeBillingScope | undefined;
   /** durable journal（dwf_* 表）。缺失即不构造本服务，见文件头不变式 3。 */
   journal: JournalStorePort;
   /**
@@ -261,7 +266,7 @@ export interface DynamicWorkflowRunServiceDeps {
    */
   onRunEvent?: (
     progress: DynamicWorkflowRunProgressPayload,
-    routing: { parentSessionId?: string },
+    routing: { parentSessionId?: string; billingScope?: RuntimeBillingScope },
   ) => void;
   logger?: Logger;
   /** 注入并发度探测，供 caps 默认值测试固定双核（地板必须是 1）。 */
@@ -411,6 +416,10 @@ export function createDynamicWorkflowRunService(
     countLiveRuns,
     subscribeRunSettled,
     close,
+    getBillingScope: (runId) => {
+      const scope = runs.get(runId)?.billingScope;
+      return scope === undefined ? undefined : structuredClone(scope);
+    },
 
     // 三条入口的关闭门。`async` 只为把这个接线错误变成 rejection 而不是同步抛；门与随后的
     // 委托之间没有 await，所以不变式 6 的「登记与 launch 同一同步片」不受影响。

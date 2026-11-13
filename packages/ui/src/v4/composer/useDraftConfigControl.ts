@@ -947,7 +947,21 @@ export function useDraftConfigControl(params: {
         workspacePath,
         workspaceIdentity: workspaceIdentity ?? null,
       });
-      updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection));
+      updateDraftConfig((current) => {
+        // 有效投影可能已剥离非法档位；保留原意图必须读取唯一草稿 owner。
+        const previous = stateRef.current.draft.modelSelection;
+        const sameManagedModel =
+          previous?.providerId === parsedSelection.providerId &&
+          previous.modelId === parsedSelection.modelId &&
+          catalog?.providers.find((provider) => provider.providerId === parsedSelection.providerId)
+            ?.config.access?.type === "brand-managed";
+        // 原因：重复点击当前模型不是重新初始化意图；保留其合法显式档位。
+        // 缺失/失效档位也保持原意图，交给强度入口明确修复，不能暗中恢复付费默认。
+        return applyDraftModelSelection(
+          current,
+          !reasoningLevel && sameManagedModel ? previous : modelSelection,
+        );
+      });
     },
     [
       modelSelectionView,

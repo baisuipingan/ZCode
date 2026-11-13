@@ -32,7 +32,31 @@ const CodingPlanUpgradeDialogContext = createContext<CodingPlanUpgradeDialogCont
   null,
 );
 
-export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactNode }) {
+const disabledCodingPlanValue: CodingPlanUpgradeDialogContextValue = {
+  inventory: { status: "ready", entryPlanList: "", retry: () => {} },
+  openCodingPlanUpgrade: () => false,
+};
+
+export function CodingPlanUpgradeDialogProvider({
+  children,
+  enabled = true,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+}) {
+  // 品牌账户没有官方套餐；禁用时不挂载取权益的 hooks 或购买 webview。
+  if (!enabled)
+    return (
+      <CodingPlanUpgradeDialogContext.Provider value={disabledCodingPlanValue}>
+        {children}
+      </CodingPlanUpgradeDialogContext.Provider>
+    );
+  return (
+    <EnabledCodingPlanUpgradeDialogProvider>{children}</EnabledCodingPlanUpgradeDialogProvider>
+  );
+}
+
+function EnabledCodingPlanUpgradeDialogProvider({ children }: { children: ReactNode }) {
   const platform = usePlatform();
   const inventory = useCodingPlanEntryPlanList();
   const inventoryRef = useRef(inventory);
@@ -45,7 +69,10 @@ export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactN
   const openCodingPlanUpgrade = useCallback(
     (
       nextTarget: CodingPlanUpgradeDialogTarget,
-      observation?: { signal: AbortSignal; onResult: (opened: boolean) => void },
+      observation?: {
+        signal: AbortSignal;
+        onResult: (opened: boolean) => void;
+      },
     ) => {
       // 所有入口统一守卫；查询完成后不自动重放之前被拦截的点击。
       const { status, entryPlanList } = inventoryRef.current;

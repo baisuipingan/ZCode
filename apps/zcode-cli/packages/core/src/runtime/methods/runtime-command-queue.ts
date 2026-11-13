@@ -35,10 +35,20 @@ export function enqueueRuntimeCommand(this: AgentRuntimeInternal, command: Runti
         ? command.agentId
         : undefined;
   // 任务卡取消封住该执行的迟到通知；聊天 Stop 不设置此标记，保持原有唤起行为。
-  if (sourceTaskId && this.runtimeTaskRegistry.get(sourceTaskId)?.offPeakCancelled) return;
-  const offPeakExecutionId =
-    sourceTaskId && this.runtimeTaskRegistry.get(sourceTaskId)?.offPeakExecutionId;
-  if (offPeakExecutionId) command = { ...command, offPeakExecutionId };
+  const sourceTask = sourceTaskId ? this.runtimeTaskRegistry.get(sourceTaskId) : undefined;
+  if (sourceTask?.offPeakCancelled) return;
+  if (sourceTask) {
+    // 通知可能晚于父轮结束或换号；只能继承创建任务时的归属，不能读取此刻的 foreground。
+    command = {
+      ...command,
+      billingBinding: sourceTask.billingBinding
+        ? structuredClone(sourceTask.billingBinding)
+        : undefined,
+      ...(sourceTask.offPeakExecutionId
+        ? { offPeakExecutionId: sourceTask.offPeakExecutionId }
+        : {}),
+    };
+  }
   this.runtimeCommandQueue.enqueue(command);
   if (command.mode === "task-notification") {
     this.logger?.info?.("Background task notification enqueued into runtime command queue", {
@@ -303,6 +313,14 @@ async function runRuntimeCommand(
       });
       const messageId = await persistSubagentMessageCommand.call(this, command);
       await this.executeTurnCommand(command.text, undefined, {
+        ...(command.billingBinding
+          ? {
+              modelExecution: {
+                selectionScope: "execution",
+                requestDependencies: { billingBinding: command.billingBinding },
+              },
+            }
+          : {}),
         offPeakExecutionId: command.offPeakExecutionId,
         abortSignal: foregroundExecution.controller.signal,
         inputSource: "subagent_message",
@@ -385,6 +403,14 @@ async function runTaskNotificationBatch(
       module: "core.runtime",
     });
     await this.executeTurnCommand(persisted.text, undefined, {
+      ...(firstCommand.billingBinding
+        ? {
+            modelExecution: {
+              selectionScope: "execution",
+              requestDependencies: { billingBinding: firstCommand.billingBinding },
+            },
+          }
+        : {}),
       offPeakExecutionId: firstCommand.offPeakExecutionId,
       // wake 缺 inputId，telemetry 借用了持久化 msg_*，与普通 main turn 分叉。
       // 每个独立 batch 使用同一 UUID v7 规则；持久化消息仍使用 recordedInputMessageId。
@@ -450,7 +476,11 @@ function beginForegroundExecution(
   } else {
     parentAbortSignal?.addEventListener("abort", abortFromParent, { once: true });
   }
+  const billingBinding =
+    command.billingBinding ??
+    ("options" in command ? command.options?.intent?.billingBinding : undefined);
   const state: ActiveForegroundExecutionState = {
+    ...(billingBinding ? { billingBinding: structuredClone(billingBinding) } : {}),
     controller,
     disposeParentAbort: () => {
       parentAbortSignal?.removeEventListener("abort", abortFromParent);

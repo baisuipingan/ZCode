@@ -22,6 +22,7 @@ import {
   IBotsService,
   IFileWatcherService,
   IOAuthService,
+  IBrandAccountService,
   IModelSelectionService,
   IProviderSettingsService,
   IProviderProvisioningTargetService,
@@ -94,6 +95,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
   readonly oauthService: IOAuthService;
+  /** 只有本机桌面 base 连接显式启用，不能依靠惰性代理判断远端是否支持。 */
+  readonly brandAccountService?: IBrandAccountService;
   readonly providerSettingsService: IProviderSettingsService;
   readonly modelSelectionService: IModelSelectionService;
   /** Host-only target proxy；不属于 IServiceAccessor，避免向 Renderer 暴露 Secret 写入接口。 */
@@ -137,6 +140,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
     options: {
       sourceServerManagementService?: boolean;
       deviceSyncStateService?: boolean;
+      brandAccountService?: boolean;
       windowProjectDirectory?: boolean;
     } = {},
   ) {
@@ -247,6 +251,11 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.deviceSyncStateService = options.deviceSyncStateService
       ? ProxyChannel.toService<IDeviceSyncStateService>(
           channelClient.getChannel(IDeviceSyncStateService.channelName),
+        )
+      : undefined;
+    this.brandAccountService = options.brandAccountService
+      ? ProxyChannel.toService<IBrandAccountService>(
+          channelClient.getChannel(IBrandAccountService.channelName),
         )
       : undefined;
     // 与设备同步状态同属数据同步页的本机 Host 服务：同一开关（只在桌面 base 连接打开）。

@@ -348,6 +348,12 @@ export class AgentRuntime {
     this.skillPort = deps.skillPort;
     this.mcpPort = deps.mcpPort;
     this.runtimeTaskRegistry = deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
+    this.runtimeTaskRegistry.setBillingBindingSource?.(() => {
+      const billingBinding =
+        this.activeForegroundExecution?.billingBinding ??
+        this.providerRuntimeHeadersPort?.billingBinding;
+      return this.activeForegroundExecution || billingBinding ? { billingBinding } : undefined;
+    });
     this.runtimeTaskRegistry.setActiveBranchGeneration?.(this.branchGeneration);
     this.workflowBlockedReminder = createWorkflowBlockedReminder(runtime);
     this.artifactStore = deps.artifactStore;
@@ -670,7 +676,11 @@ export interface AgentRuntime {
    * provider runtime headers），已绑定本 runtime 的客户端路由身份。class 外构造的子 runtime
    * **必须**经这里取这两个端口，不能自行从 appOptions 取——理由见 `methods/config.ts` 的实现注释。
    */
-  createChildClientPorts(context: ChildClientPortsContext): ClientFacingPorts;
+  createChildClientPorts(
+    context: ChildClientPortsContext,
+    billingScope?: import("./helpers/child-client-ports.js").RuntimeBillingScope,
+  ): ClientFacingPorts;
+  captureBillingScope(): import("./helpers/child-client-ports.js").RuntimeBillingScope | undefined;
   getContextBuilder(): ContextBuilder;
   /** Composer 使用的 Session Skill 快照；同一 runtime 冻结，runtime 重建后重新发现。 */
   getSkillCatalog(traceContext: TraceContext): Promise<SkillLoadOutcome>;
@@ -682,6 +692,7 @@ export interface AgentRuntime {
   /** workflow run 进度的出回合追加（事件源在 bootstrap 的 run service）。 */
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
+    billingScope?: import("./helpers/child-client-ports.js").RuntimeBillingScope,
   ): Promise<void>;
   /** 恢复的 dwf run 的追踪重臂（registry 登记 + started 事件 + waiter + 结算通知）。 */
   /**

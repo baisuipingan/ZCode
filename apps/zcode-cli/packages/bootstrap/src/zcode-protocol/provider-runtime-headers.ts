@@ -4,6 +4,7 @@ import {
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
   zcodeProviderRuntimeHeadersResponseSchema,
+  zcodeManagedInferenceOutcomeSchema,
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
 import type { ZCodeAppOptions } from "../app/types.js";
@@ -22,6 +23,18 @@ export function createProviderRuntimeHeadersPort(
   workspace: ZCodeWorkspaceRef,
 ): NonNullable<ZCodeAppOptions["providerRuntimeHeadersPort"]> {
   return {
+    reportManagedOutcome(input) {
+      // 实时私有通知没有session事件/Renderer投影，不随手机gap repair重放。
+      context.notify({
+        method: zcodeProtocolNotifications.managedInferenceOutcome,
+        ...(input.traceContext ? { trace: protocolTraceFromTraceContext(input.traceContext) } : {}),
+        params: zcodeManagedInferenceOutcomeSchema.parse({
+          workspace,
+          sessionId: input.sessionId,
+          outcome: input.outcome,
+        }),
+      });
+    },
     shouldRefreshBeforeModelRequest() {
       // Account 请求由绑定 Model 决定是否进入鉴权，不能把所有账号收窄到旧 Start ID。
       // 普通 API 不进入此端口；Team/Individual 继续复用请求级鉴权合同。
@@ -42,6 +55,11 @@ export function createProviderRuntimeHeadersPort(
             modelSelection: { providerId: input.providerId, modelId: input.modelId },
             providerId: input.providerId,
             ...(input.accountAccess ? { accountAccess: input.accountAccess } : {}),
+            ...(input.managedAccess ? { managedAccess: input.managedAccess } : {}),
+            ...(input.modelConfigRevision
+              ? { modelConfigRevision: input.modelConfigRevision }
+              : {}),
+            ...(input.phase ? { phase: input.phase } : {}),
             ...(input.expectedAccountScope
               ? { expectedAccountScope: input.expectedAccountScope }
               : {}),

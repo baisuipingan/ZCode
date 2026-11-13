@@ -90,6 +90,16 @@ ZCode 需要把 schema gating 做成能力协商结果，而不是在 tool 内�
 - remote 启动时提示父 agent 简短告知用户已启动，然后结束本轮。
 - 子 agent 的结果不会自动展示给最终用户，父 agent 必须负责总结或继续执行。
 
+托管推理的后台归属：Agent 创建/终态恢复的新任务生命由 registry 保存原 `billingBinding`，子 runtime
+在异步初始化前读取该任务快照。完成通知和 SendMessage 回报的自主唤醒只携带任务原绑定；同绑定才可
+合批或被父活动轮吸收，不能在父轮结束/换号后用当前账户补签。唤醒的请求与 `turn_settled` 都使用该
+绑定，原 runner/Host 校验继续拒绝已失效的身份。普通 API 保持无绑定。仅内存执行元数据改变，
+工具文本/schema、权限与恢复策略不变，详见 [托管推理 spec](../../../../../../docs/fork/14-managed-agent-inference-spec.md)。
+
+动态 workflow 的 actor 与早期进度通知使用 service 在 submit/amend 新 run 入口冻结的 scope，
+不在 actor 延迟启动时读取父会话此刻的轮次。同 run 的工具、GUI 与自动 resume 保留原 scope；
+终态重臂只刷新分支代和结算面，冷恢复缺可信 scope 时保持无绑定，由原鉴权闸门拒绝。
+
 ## Agent 定义契约
 
 ZCode 的用户／项目自定义 Markdown 仅从各自 `agents` 根目录直接文件加载

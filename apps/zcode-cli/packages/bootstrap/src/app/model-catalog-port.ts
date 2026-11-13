@@ -11,19 +11,11 @@
 // 工具层要的窄条目。刻意不共用一个投影函数——两张脸的字段集与在场规则各自独立，硬要合并只会
 // 让一次为 picker 做的改动悄悄改掉模型解析的判据。共用的是**默认档位那条规则**（见下）。
 
-import type { ModelCatalogEntry, ModelCatalogPort } from "@zcode/contracts";
-import type { ModelSelection } from "@zcode/shared/model-selection";
-import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
-
-interface ModelCatalogPortDeps {
-  /** 进程的 Provider Registry。**整个对象**存下来，绝不在这里 `getView()` 一次存成快照。 */
-  registry: ProviderRegistryModelSource;
-  /**
-   * 会话**当前**的模型选择（`runtime.getSessionModelSelection()`）。与 registry 同理是函数而
-   * 不是值：`current` 是每次列举那一刻的事实，用户可以在两次工具调用之间换主模型。
-   */
-  currentSelection: () => ModelSelection | undefined;
-}
+import type {
+  ModelCatalogAdapterDependencies,
+  ModelCatalogEntry,
+  ModelCatalogPort,
+} from "./model-catalog-adapter/contract.js";
 
 /**
  * 造 {@link ModelCatalogPort}。
@@ -35,7 +27,7 @@ interface ModelCatalogPortDeps {
  * 失败要等到子代理第一次开口才炸——离用户按下确认已经很远了。视图本身是内存对象，
  * 重读它不是 I/O。
  */
-export function createModelCatalogPort(deps: ModelCatalogPortDeps): ModelCatalogPort {
+export function createModelCatalogPort(deps: ModelCatalogAdapterDependencies): ModelCatalogPort {
   return {
     listModels(): ModelCatalogEntry[] {
       // 这一行就是上面那条纪律的全部实现。任何把它提到闭包外的「优化」都在重演同一问题。
@@ -47,11 +39,12 @@ export function createModelCatalogPort(deps: ModelCatalogPortDeps): ModelCatalog
           // 档位表**复制**而不是原样递出：注册表的 values 是 readonly 视图的一部分，
           // 端口契约给的是一个普通可读数组，让调用方拿到一份不会随注册表变动的副本。
           const reasoningLevels = [...reasoning.values];
-          // 默认档位 = 最后一档，与 provider-registry-selection.ts 的 `toModelOption`
-          // （GUI picker 的 `reasoning.defaultLevel`）**同一条规则**。两处给出不同的默认，
+          // 显式默认优先，无此元数据的旧配置仍用最后一档；与GUI picker保持同一条规则。
+          // 原因：受管多模型各自有默认档位，不能把非全局默认模型擅自提升到最高档。
+          // 两处给出不同的默认，
           // 就会出现「picker 里默认 high、`subagent_model` 不写档位时默认 low」这种只有用户
           // 会发现的偏差。没有档位的模型整个字段缺席（空数组 + 无默认）。
-          const defaultReasoningLevel = reasoning.values.at(-1);
+          const defaultReasoningLevel = reasoning.defaultLevel ?? reasoning.values.at(-1);
           const contextWindow = model.config.properties.contextWindow;
           // `providerName` 在注册表里是 `string | null | undefined`（config-service.ts 把空串
           // 归一成 `null`），而端口契约上是 `string | undefined`。三种「没名字」在这里合成
