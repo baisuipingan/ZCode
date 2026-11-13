@@ -121,6 +121,8 @@ node scripts/milocode-release.mjs publish --dir output/milocode-release/3.17.3
 
 额外完成 Go / Node 真实 SDK 契约检查：后端 AWS SDK 使用假凭据生成标准 R2 预签响应，CLI 原样接收并验证签名 URL、必需 headers 与 15 分钟有效期，再向本地 mock 流式送出 12,345 字节并核对 SHA256；没有真实网络请求，临时 JSON / payload 已清理。
 
+2026-11-14 补充已有管理员 Key 发布接入：TOKEN / KEY 与直接 S3 配置冲突会在联网前失败；Key 只用于指定管理员 origin 的 `x-api-key`，R2 上传、公网 HEAD / Range / 完整 GET 和本地发布计划均不包含它。401 / 403 不回退到其他鉴权，实际申请 PUT URL 时的 step-up 403 也会停止且零存储写入。`pnpm test:milocode-updates` 共 31 / 31 通过（30 项协议 / 发布用例和包含 13 场景的退出屏障工程脚本）。
+
 `node --test packages/ui/test/browser/manual-review/pending/milocode-manual-update.test.mjs`：16 / 16 通过。范围内 oxlint 为 0 errors / 0 warnings，`git diff --check` 通过。根类型检查、整仓 lint、应用构建和真实安装升级由主集成任务执行，不能用以上工具测试替代。
 
 用户已报告创建独立桶 `milocode-releases` 与下载域名 `download.editor.vip`；本子任务尚未验证公网对象或上传。Sub2API 管理设置接入发布存储并复用现有 S3 连接/凭据，发布工具已按 `sub2api/docs/DESKTOP_RELEASES.md` 的接口合同消费后台配置并申请临时 PUT 链接直传 R2。正式 Windows / Mac 签名密钥已生成；独立加密备份尚未完成。本子任务没有创建桶、修改 DNS、生成正式密钥或上传任何安装包。
