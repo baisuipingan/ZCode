@@ -8,6 +8,8 @@
 
 Mac ARM64 使用固定 Sparkle 2.10.1（下载归档校验固定 SHA256）和薄 Node-API 桥。归档与 feed 都用 Sparkle 官方工具签名；强制 signed feed、解压前验证，禁未签名 feed 回退、delta、脚本安装包和自动安装。原生事务先暂停，Main 确认用户意图、完成退出准入后才放行同一 requestId。
 
+正式 MiloCode Mac 引导包使用免费 ad-hoc 签名封装完整应用，保持 `hardenedRuntime:false`。不把 Electron 原始可执行文件的 linker 签名当作改名后应用的完整资源签名；打包器须接受真实 schema，DMG 内应用须通过 `codesign --verify --deep --strict`。这不是付费 Developer ID 或公证，首次安装仍受系统正常验证约束。
+
 所有更新均允许检查，用户明确下载、安装并重启。旧预览、自动下载、退出即装偏好不能覆盖策略；隐藏对应控件。更新失败不切回原 ZCode 发布源，原 ZCode 的启动强更不再介入 MiloCode。
 
 Sub2API 桌面端设置新增独立「MiloCode 发布存储」卡片，仅存桶名与 HTTPS 公网 origin，固定 `milocode/` 前缀。它不写入 Agent 模型配置或 bootstrap，不加数据库表。凭据、endpoint、region 和 path-style 运行时继承备份 S3，只在后端解密；独立桶不能等于备份桶。保存、测试和上传授权复用现有完整管理员权限及 step-up。

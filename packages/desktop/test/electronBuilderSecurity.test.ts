@@ -23,7 +23,10 @@ it("Windows 更新发布者来自已签名应用，并保留原更新配置", as
       status: 0,
       subject: "CN=Example Publisher, O=Example Company, C=US",
     }));
-    vi.stubEnv("ZCODE_WINDOWS_UPDATE_TRUSTED_PUBLISHER_DNS", "invalid retired setting");
+    vi.stubEnv(
+      "ZCODE_WINDOWS_UPDATE_TRUSTED_PUBLISHER_DNS",
+      "invalid retired setting",
+    );
     await writeWindowsUpdatePublisher({
       appOutDir: root,
       executableName: "Example",
@@ -51,7 +54,9 @@ it("Windows 更新发布者来自已签名应用，并保留原更新配置", as
     });
     const verifier = vi.fn(async () => null as string | null);
     updater.verifyUpdateCodeSignature = verifier;
-    const verify = updater as unknown as { verifySignature(path: string): Promise<string | null> };
+    const verify = updater as unknown as {
+      verifySignature(path: string): Promise<string | null>;
+    };
     const installer = join(root, "update.exe");
     expect(await verify.verifySignature(installer)).toBeNull();
     expect(verifier).toHaveBeenCalledWith(
@@ -148,20 +153,31 @@ it("macOS afterExtract 从 app Resources 保留 Electron 原始许可", async ()
   const resources = join(root, appName, "Contents", "Resources");
   try {
     await mkdir(resources, { recursive: true });
-    await writeFile(join(resources, "LICENSE.electron.txt"), "electron-license");
-    await writeFile(join(resources, "LICENSES.chromium.html"), "chromium-license");
+    await writeFile(
+      join(resources, "LICENSE.electron.txt"),
+      "electron-license",
+    );
+    await writeFile(
+      join(resources, "LICENSES.chromium.html"),
+      "chromium-license",
+    );
 
     await config.afterExtract?.({
       appOutDir: root,
       electronPlatformName: "darwin",
-      packager: { info: { framework: { distMacOsAppName: appName, version: "44.7.0" } } },
+      packager: {
+        info: { framework: { distMacOsAppName: appName, version: "44.7.0" } },
+      },
     } as never);
 
-    expect(await readFile(join(resources, "licenses/electron/LICENSE"), "utf8")).toBe(
-      "electron-license",
-    );
     expect(
-      await readFile(join(resources, "licenses/electron/LICENSES.chromium.html"), "utf8"),
+      await readFile(join(resources, "licenses/electron/LICENSE"), "utf8"),
+    ).toBe("electron-license");
+    expect(
+      await readFile(
+        join(resources, "licenses/electron/LICENSES.chromium.html"),
+        "utf8",
+      ),
     ).toBe("chromium-license");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -181,14 +197,21 @@ it("Windows afterExtract 继续从 appOutDir 根目录保留 Electron 原始许�
     await config.afterExtract?.({
       appOutDir: root,
       electronPlatformName: "win32",
-      packager: { info: { framework: { distMacOsAppName: "Electron.app", version: "44.7.0" } } },
+      packager: {
+        info: {
+          framework: { distMacOsAppName: "Electron.app", version: "44.7.0" },
+        },
+      },
     } as never);
 
-    expect(await readFile(join(resources, "licenses/electron/LICENSE"), "utf8")).toBe(
-      "electron-license",
-    );
     expect(
-      await readFile(join(resources, "licenses/electron/LICENSES.chromium.html"), "utf8"),
+      await readFile(join(resources, "licenses/electron/LICENSE"), "utf8"),
+    ).toBe("electron-license");
+    expect(
+      await readFile(
+        join(resources, "licenses/electron/LICENSES.chromium.html"),
+        "utf8",
+      ),
     ).toBe("chromium-license");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -221,14 +244,20 @@ function configureMiloCodeTestUpdates(platform: string) {
   const { publicKey } = generateKeyPairSync("ed25519");
   vi.stubEnv("ZCODE_TARGET_OS", platform);
   vi.stubEnv("ZCODE_TARGET_ARCH", platform === "darwin" ? "arm64" : "x64");
-  vi.stubEnv("MILOCODE_UPDATE_BASE_URL", "https://download.example.com/milocode/");
+  vi.stubEnv(
+    "MILOCODE_UPDATE_BASE_URL",
+    "https://download.example.com/milocode/",
+  );
   vi.stubEnv(
     "MILOCODE_UPDATE_PUBLIC_KEYS_JSON",
     JSON.stringify({
       test: publicKey.export({ type: "spki", format: "pem" }),
     }),
   );
-  vi.stubEnv("MILOCODE_SPARKLE_PUBLIC_KEY", Buffer.alloc(32, 1).toString("base64"));
+  vi.stubEnv(
+    "MILOCODE_SPARKLE_PUBLIC_KEY",
+    Buffer.alloc(32, 1).toString("base64"),
+  );
 }
 
 it("MiloCode Windows 的免费发布签名策略不再要求付费发行证书", async () => {
@@ -242,7 +271,8 @@ it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async 
   configureMiloCodeTestUpdates("darwin");
   const { default: config } = await import("../electron-builder.config.js");
   expect(config.mac?.extendInfo).toMatchObject({
-    SUFeedURL: "https://download.example.com/milocode/stable/darwin-arm64/appcast.xml",
+    SUFeedURL:
+      "https://download.example.com/milocode/stable/darwin-arm64/appcast.xml",
     MiloCodeReleaseBaseURL: "https://download.example.com/milocode/",
     SURequireSignedFeed: true,
     SUSignedFeedFailureExpirationInterval: 0,
@@ -252,10 +282,17 @@ it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async 
     SUAutomaticallyUpdate: false,
   });
   expect(config.mac?.extraFiles).toEqual([
-    { from: expect.stringContaining("Sparkle.framework"), to: "Frameworks/Sparkle.framework" },
+    {
+      from: expect.stringContaining("Sparkle.framework"),
+      to: "Frameworks/Sparkle.framework",
+    },
   ]);
+  expect(config.mac?.identity).toBe("-");
+  expect(config.mac?.hardenedRuntime).toBe(false);
   // 校验锁定打包器真实 schema，避免配置对象看似正确、首次正式打包才暴露非法字段。
-  const { validateConfiguration } = require("app-builder-lib/out/util/config/config.js");
+  const {
+    validateConfiguration,
+  } = require("app-builder-lib/out/util/config/config.js");
   await validateConfiguration(config);
   expect(config.extraResources).toEqual(
     expect.arrayContaining([
@@ -271,7 +308,9 @@ it("DMG contents 不得引用镜像内生成的隐藏文件", async () => {
   // dmg-builder@1.2.5 的 dmgbuild 会把每个 type:"file" 条目当作真实源文件 ditto；
   // .background/.VolumeIcon 等隐藏文件由 dmgbuild 在镜像内生成，列入 contents
   // 会在 DMG 阶段以 "Cannot get the real path" 硬失败。
-  const fileEntries = (config.dmg?.contents ?? []).filter((item) => item.type === "file");
+  const fileEntries = (config.dmg?.contents ?? []).filter(
+    (item) => item.type === "file",
+  );
   const generatedHiddenFiles = fileEntries.filter(
     (item) =>
       typeof item.path === "string" &&

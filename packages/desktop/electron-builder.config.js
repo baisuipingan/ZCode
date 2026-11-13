@@ -5,11 +5,17 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
-import { runCommand, runCommandAndReadStdout } from "../../scripts/spawn-command.mjs";
+import {
+  runCommand,
+  runCommandAndReadStdout,
+} from "../../scripts/spawn-command.mjs";
 import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config.mjs";
 import { resolveBuildTimeConfig } from "../../scripts/build-time-config.mjs";
 import { prepareMacSparkleRuntime } from "./scripts/milocode-sparkle-runtime.mjs";
-import { noticesFileName, stageElectronNotices } from "../../scripts/third-party-notices.mjs";
+import {
+  noticesFileName,
+  stageElectronNotices,
+} from "../../scripts/third-party-notices.mjs";
 import { resolveNativeSearchReleasePlan } from "../../scripts/native-search-tools-config.mjs";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { collectRuntimeModuleClosureEntries } from "./scripts/runtime-dependency-closure.mjs";
@@ -41,7 +47,10 @@ import {
   createDesktopNativePackagePrunePatterns,
   parseAsarListWithPackState,
 } from "./scripts/desktop-native-package-policy.mjs";
-import { assertAppAsarIntegrity, replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
+import {
+  assertAppAsarIntegrity,
+  replaceAppAsarFromStaging,
+} from "./scripts/app-asar-repack.mjs";
 import {
   patchNsisInstallSectionFile,
   restoreNsisInstallSectionFileSync,
@@ -59,11 +68,15 @@ const miloCodeWindowsUpdatesEnabled =
   targetPlatform.os === "win32" &&
   targetPlatform.arch === "x64" &&
   Boolean(miloCodeUpdateConfig.milocodeUpdateBaseUrl);
-const miloCodeSparkleResources = resolve(import.meta.dirname, "resources/milocode-update");
+const miloCodeSparkleResources = resolve(
+  import.meta.dirname,
+  "resources/milocode-update",
+);
 // 修复原因：Windows Chrome 导入入口已暂时隐藏，默认安装包不应继续携带、签名或校验原生 helper。
 // 代码和完整供应链保留在显式 opt-in 后，便于未来恢复而不影响当前发布流程。
 const shouldPackageWindowsBrowserImportHelper =
-  targetPlatform.os === "win32" && process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
+  targetPlatform.os === "win32" &&
+  process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
 const builtinProviderConfig = await loadBuiltinProviderConfig();
 const desktopProductIdentity = resolveDesktopProductIdentity({
   ...process.env,
@@ -73,7 +86,8 @@ const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
   platform: targetPlatform.os,
   arch: targetPlatform.arch,
 });
-const rawMacSigningIdentity = process.env.APPLE_SIGNING_IDENTITY || process.env.CSC_NAME;
+const rawMacSigningIdentity =
+  process.env.APPLE_SIGNING_IDENTITY || process.env.CSC_NAME;
 const macSigningIdentity =
   rawMacSigningIdentity?.replace(/^Developer ID Application:\s*/, "") ?? null;
 const shouldEnableMacSigning =
@@ -81,7 +95,9 @@ const shouldEnableMacSigning =
 const workspaceRoot = resolve(import.meta.dirname, "../..");
 const desktopPackageRoot = import.meta.dirname;
 // Computer Use Helper（macOS .app、Windows runtime）只随真实 producer 打包；开源占位包下跳过随包资源与校验。
-const shouldPackageComputerUseHelper = isRealComputerUseProducerInstalled({ desktopPackageRoot });
+const shouldPackageComputerUseHelper = isRealComputerUseProducerInstalled({
+  desktopPackageRoot,
+});
 const HELPER_FILENAME = "zcode-browser-import-helper.exe";
 const runtimeModuleLookupRoots = [
   desktopPackageRoot,
@@ -104,7 +120,8 @@ const requireFromConfig = createRequire(import.meta.url);
 let nsisInstallSectionPatched = false;
 let nsisInstallSectionOriginalSource = null;
 let nsisInstallSectionPath = null;
-const desktopElectronVersion = requireFromConfig("./package.json").devDependencies.electron;
+const desktopElectronVersion =
+  requireFromConfig("./package.json").devDependencies.electron;
 const asarCliPath = resolve(
   dirname(requireFromConfig.resolve("@electron/asar/package.json")),
   "bin",
@@ -189,7 +206,9 @@ async function writeWindowsInstallManifest(context) {
   const files = [];
   const visit = async (directory, relativeDirectory = "") => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name;
       const absolutePath = join(directory, entry.name);
       if (entry.isDirectory()) {
         await visit(absolutePath, relativePath);
@@ -201,7 +220,11 @@ async function writeWindowsInstallManifest(context) {
 
   await visit(root);
   files.sort();
-  await writeFile(join(root, WINDOWS_INSTALL_MANIFEST_NAME), `${files.join("\r\n")}\r\n`, "utf8");
+  await writeFile(
+    join(root, WINDOWS_INSTALL_MANIFEST_NAME),
+    `${files.join("\r\n")}\r\n`,
+    "utf8",
+  );
 }
 
 function resolveElectronDownloadMirror(env = process.env) {
@@ -229,7 +252,9 @@ function assertPackagedCuaHelper(context) {
     HELPER_APP_NAME,
   );
   if (!existsSync(appPath)) {
-    throw new Error(`Packaged ZCode is missing bundled Computer Use Helper: ${appPath}`);
+    throw new Error(
+      `Packaged ZCode is missing bundled Computer Use Helper: ${appPath}`,
+    );
   }
 }
 const shouldEnableWindowsVsign =
@@ -332,7 +357,13 @@ async function runTimedAsync(label, fn) {
 function resolveAppAsarPath(context) {
   if (context.electronPlatformName === "darwin") {
     const appName = `${context.packager?.appInfo?.productFilename ?? "ZCode"}.app`;
-    return resolve(context.appOutDir, appName, "Contents", "Resources", "app.asar");
+    return resolve(
+      context.appOutDir,
+      appName,
+      "Contents",
+      "Resources",
+      "app.asar",
+    );
   }
 
   return resolve(context.appOutDir, "resources", "app.asar");
@@ -369,7 +400,9 @@ function resolveMissingRuntimeModules(appAsarPath) {
       // 让 afterPack 只处理当前环境确实可解析的依赖，避免 CI 因单个可选依赖缺失全量失败。
       console.warn(
         `[afterPack] runtime module not found, skip injection: ${entry.moduleName}; searched=${runtimeModuleLookupRoots
-          .map((lookupRoot) => resolve(lookupRoot, "node_modules", entry.moduleName))
+          .map((lookupRoot) =>
+            resolve(lookupRoot, "node_modules", entry.moduleName),
+          )
           .join(", ")}`,
       );
       return false;
@@ -397,16 +430,21 @@ async function injectHoistedRuntimeModulesIntoAsar(context) {
     throw new Error(`打包产物缺少 app.asar: ${appAsarPath}`);
   }
 
-  const missingRuntimeModules = runTimedSync("afterPack:scan-missing-runtime-modules", () =>
-    resolveMissingRuntimeModules(appAsarPath),
+  const missingRuntimeModules = runTimedSync(
+    "afterPack:scan-missing-runtime-modules",
+    () => resolveMissingRuntimeModules(appAsarPath),
   );
   if (missingRuntimeModules.length === 0) {
     // 之前 afterPack 每次都完整 extract/pack app.asar，即使运行时依赖已经齐全也会重复重写。
     // 这会把每次打包固定拉长十几秒到几十秒。先做缺失扫描，只有真的缺包才执行重写流程。
-    console.log("[afterPack] runtime modules already complete, skip app.asar rewrite");
+    console.log(
+      "[afterPack] runtime modules already complete, skip app.asar rewrite",
+    );
     return;
   }
-  console.log(`[afterPack] missing runtime modules count=${missingRuntimeModules.length}`);
+  console.log(
+    `[afterPack] missing runtime modules count=${missingRuntimeModules.length}`,
+  );
 
   // CI 会把 TMPDIR 指到项目内 .tmp，GitLab get_sources/clean 可能在脚本启动前清掉该目录。
   // afterPack 里重写 app.asar 同样依赖 mkdtempSync，必须自己兜底创建父目录，避免后续签名阶段只看到 .app 消失。
@@ -428,7 +466,9 @@ async function injectHoistedRuntimeModulesIntoAsar(context) {
         if (!sourceModulePath) {
           throw new Error(
             `未找到运行时依赖 ${moduleName}，已搜索: ${runtimeModuleLookupRoots
-              .map((lookupRoot) => resolve(lookupRoot, "node_modules", moduleName))
+              .map((lookupRoot) =>
+                resolve(lookupRoot, "node_modules", moduleName),
+              )
               .join(", ")}`,
           );
         }
@@ -479,7 +519,8 @@ async function stripPackagedSourcemapReferences(context) {
     pruneStagingDirectory:
       targetPlatform.key === "win32-x64" &&
       process.env.ZCODE_PRUNE_PACKAGED_PLATFORM_DEPENDENCIES === "1"
-        ? (stagingDir) => pruneIncompatiblePlatformPackages(stagingDir, targetPlatform)
+        ? (stagingDir) =>
+            pruneIncompatiblePlatformPackages(stagingDir, targetPlatform)
         : null,
   });
 }
@@ -489,11 +530,16 @@ function assertPackagedNativeResourcePolicy(context) {
   const entries = parseAsarListWithPackState(
     runAsarCommandAndReadStdout(["list", "--is-pack", appAsarPath]),
   );
-  const violations = findDesktopNativePackageViolations(entries, targetPlatform.key);
+  const violations = findDesktopNativePackageViolations(
+    entries,
+    targetPlatform.key,
+  );
   if (violations.length > 0) {
     // supportedArchitectures 允许工作区准备多平台依赖，但安装包只能携带目标平台资源。
     // 之前 Canvas 和 node-pty 的其他平台 native 被同时写进 asar/unpacked，包体被放大数百 MiB。
-    throw new Error(`桌面 native 资源边界校验失败:\n- ${violations.join("\n- ")}`);
+    throw new Error(
+      `桌面 native 资源边界校验失败:\n- ${violations.join("\n- ")}`,
+    );
   }
 }
 
@@ -554,7 +600,12 @@ function assertSignedWindowsBrowserImportHelper(context) {
     !shouldEnableWindowsVsign
   )
     return;
-  const helperPath = resolve(context.appOutDir, "resources", "browser-import", HELPER_FILENAME);
+  const helperPath = resolve(
+    context.appOutDir,
+    "resources",
+    "browser-import",
+    HELPER_FILENAME,
+  );
   const appExecutablePath = resolve(
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.exe`,
@@ -577,7 +628,10 @@ function assertSignedWindowsBrowserImportHelper(context) {
   // PSModulePath 让 Windows PowerShell 5.1 错误加载不兼容模块。
   runCommand(
     "powershell.exe",
-    createWindowsPowerShellSecurityArgs(script, [helperPath, appExecutablePath]),
+    createWindowsPowerShellSecurityArgs(script, [
+      helperPath,
+      appExecutablePath,
+    ]),
   );
 }
 
@@ -588,7 +642,12 @@ function signWindowsBrowserImportHelper(context) {
     !shouldEnableWindowsVsign
   )
     return;
-  const helperPath = resolve(context.appOutDir, "resources", "browser-import", HELPER_FILENAME);
+  const helperPath = resolve(
+    context.appOutDir,
+    "resources",
+    "browser-import",
+    HELPER_FILENAME,
+  );
   runCommand("powershell.exe", [
     "-NoLogo",
     "-NoProfile",
@@ -658,7 +717,10 @@ export default {
     `node_modules/node-pty/prebuilds/${targetPlatform.key}/**`,
   ],
   beforePack: async (context) => {
-    if (shouldPackageMiloCodeSparkle && context.electronPlatformName === "darwin") {
+    if (
+      shouldPackageMiloCodeSparkle &&
+      context.electronPlatformName === "darwin"
+    ) {
       await runTimedAsync("beforePack:prepareMiloCodeSparkle", () =>
         prepareMacSparkleRuntime({ targetArch: targetPlatform.arch }),
       );
@@ -676,8 +738,9 @@ export default {
       "nsis",
       "installSection.nsh",
     );
-    const patchResult = await runTimedAsync("beforePack:patchNsisInstallSection", () =>
-      patchNsisInstallSectionFile(nsisInstallSectionPath),
+    const patchResult = await runTimedAsync(
+      "beforePack:patchNsisInstallSection",
+      () => patchNsisInstallSectionFile(nsisInstallSectionPath),
     );
     nsisInstallSectionPatched = true;
     nsisInstallSectionOriginalSource = patchResult.originalSource;
@@ -697,14 +760,23 @@ export default {
     const framework = context.packager.info.framework;
     const resources =
       context.electronPlatformName === "darwin"
-        ? resolve(context.appOutDir, framework.distMacOsAppName, "Contents", "Resources")
+        ? resolve(
+            context.appOutDir,
+            framework.distMacOsAppName,
+            "Contents",
+            "Resources",
+          )
         : resolve(context.appOutDir, "resources");
     // 26.17.0 在 afterExtract 前已将 macOS 的 LICENSE/Chromium 声明移动到 app Resources；
     // Windows/Linux 仍把许可文件保留在 appOutDir 根目录。源目录必须跟随 Builder 的平台布局，
     // 否则 macOS 会继续读取已经被移动的 LICENSE.electron.txt 并在签名前失败。
     const extractedLicenseRoot =
       context.electronPlatformName === "darwin" ? resources : context.appOutDir;
-    await stageElectronNotices(extractedLicenseRoot, resources, framework.version);
+    await stageElectronNotices(
+      extractedLicenseRoot,
+      resources,
+      framework.version,
+    );
   },
   afterPack: async (context) => {
     await runTimedAsync("afterPack:assertInitialAppAsarIntegrity", () =>
@@ -730,9 +802,15 @@ export default {
     runTimedSync("afterPack:assertPackagedNodePtyPrebuild", () =>
       assertPackagedNodePtyPrebuild(context),
     );
-    runTimedSync("afterPack:assertPackagedCuaSharp", () => assertPackagedCuaSharp(context));
-    runTimedSync("afterPack:assertPackagedCuaKoffi", () => assertPackagedCuaKoffi(context));
-    runTimedSync("afterPack:assertPackagedCuaHelper", () => assertPackagedCuaHelper(context));
+    runTimedSync("afterPack:assertPackagedCuaSharp", () =>
+      assertPackagedCuaSharp(context),
+    );
+    runTimedSync("afterPack:assertPackagedCuaKoffi", () =>
+      assertPackagedCuaKoffi(context),
+    );
+    runTimedSync("afterPack:assertPackagedCuaHelper", () =>
+      assertPackagedCuaHelper(context),
+    );
     if (actualWindowsTarget && shouldPackageComputerUseHelper) {
       await runTimedAsync("afterPack:finalizePackagedWindowsCuaHelper", () =>
         finalizePackagedWindowsCuaHelper({
@@ -943,7 +1021,12 @@ export default {
     // z-code 之前只有本地未签名打包配置，CI 即使注入了证书变量，
     // electron-builder 也不会自动切到 hardened runtime / entitlement 这套发布参数。
     // 这里显式收拢到环境开关，保证本地开发不被签名配置绑死，CI 发布时再按需打开。
-    identity: shouldEnableMacSigning ? macSigningIdentity : null,
+    // MiloCode 无发行证书时仍免费封装完整资源签名；原 Electron 的 linker 签名不覆盖改名后的 bundle。
+    identity: shouldEnableMacSigning
+      ? macSigningIdentity
+      : shouldPackageMiloCodeSparkle
+        ? "-"
+        : null,
     // macOS 产物采用“build 阶段签名 + 独立公证阶段”的两段式流水线。
     // 如果这里不显式关闭 electron-builder 内置 notarize，它会在 build 阶段读取 Apple 凭据后直接尝试公证，
     // 并强制要求 APPLE_APP_SPECIFIC_PASSWORD，导致 build 还没产出 DMG 就提前失败。
