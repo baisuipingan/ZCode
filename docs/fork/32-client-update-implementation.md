@@ -1,6 +1,6 @@
 # MiloCode 应用内更新实施与验证
 
-实施日期：2026-11-13—14。对应 [产品合同](30-client-update-without-paid-certificates.md)、[发布操作](31-client-update-release-guide.md) 与相邻 Sub2API 的 `docs/DESKTOP_RELEASES.md`。当前版本仍为 3.17.2；本次没有发布同版本不同字节的正式资源。
+实施日期：2026-11-13—14。对应 [产品合同](30-client-update-without-paid-certificates.md)、[发布操作](31-client-update-release-guide.md) 与相邻 Sub2API 的 `docs/DESKTOP_RELEASES.md`。客户端构建已升至 3.17.3；Windows 正式资源已发布，Mac ARM64 正式发布等待解锁后的实际登录验收。当前进展与具体边界见 [3.17.3 发布记录](33-client-update-release-3.17.3.md)，下方早期验证记录按各自日期理解。
 
 ## 实际落地
 
