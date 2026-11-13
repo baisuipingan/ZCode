@@ -251,7 +251,12 @@ it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async 
     SUAllowsAutomaticUpdates: false,
     SUAutomaticallyUpdate: false,
   });
-  expect(config.mac?.extraFrameworks).toHaveLength(1);
+  expect(config.mac?.extraFiles).toEqual([
+    { from: expect.stringContaining("Sparkle.framework"), to: "Frameworks/Sparkle.framework" },
+  ]);
+  // 校验锁定打包器真实 schema，避免配置对象看似正确、首次正式打包才暴露非法字段。
+  const { validateConfiguration } = require("app-builder-lib/out/util/config/config.js");
+  await validateConfiguration(config);
   expect(config.extraResources).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ to: "milocode-update/milocode_sparkle.node" }),

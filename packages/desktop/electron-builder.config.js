@@ -896,7 +896,16 @@ export default {
   ],
   mac: {
     ...(shouldPackageMiloCodeSparkle
-      ? { extraFrameworks: [resolve(miloCodeSparkleResources, "Sparkle.framework")] }
+      ? {
+          // electron-builder 26 的 mac schema 无 extraFrameworks；extraFiles 以 Contents 为根，
+          // 保持原生桥 @rpath 所需的 Frameworks 路径，并在真实 schema 校验中验证。
+          extraFiles: [
+            {
+              from: resolve(miloCodeSparkleResources, "Sparkle.framework"),
+              to: "Frameworks/Sparkle.framework",
+            },
+          ],
+        }
       : {}),
     minimumSystemVersion: "13.0.0",
     target: ["dmg", "zip"],
