@@ -1,6 +1,6 @@
 # MiloCode 应用内更新发布操作
 
-状态：发布操作合同，2026-11-14；生产已验证桶 `milocode-releases` 与域名 `download.editor.vip`，Windows 3.17.3 已发布。Mac ARM64 等待解锁后的最终实际登录验收，具体进展见 [发布记录](33-client-update-release-3.17.3.md)。客户端设计见 [30](30-client-update-without-paid-certificates.md)。
+状态：发布操作合同，2026-11-14；生产已验证桶 `milocode-releases` 与域名 `download.editor.vip`，Windows x64 与 Mac ARM64 3.17.3 均已发布，具体进展见 [发布记录](33-client-update-release-3.17.3.md)。客户端设计见 [30](30-client-update-without-paid-certificates.md)。
 
 ## 存储位置
 
