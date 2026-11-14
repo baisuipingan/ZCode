@@ -54,7 +54,7 @@ NSIS 3.12 统一套装包含内置和扩展插件。Builder 先 include `install
   → 仅停止本次进程树 → 静默卸载退出 0/安装文件已删除
 ```
 
-- 工作流仅在 `codex/desktop-managed-agent` 的验收脚本、该工作流或验收 manifest 变更时自动执行，也支持手动触发；权限仅 `contents: read`。只使用仓库 token 读取同仓库 Draft，不读取发布签名私钥或生产凭据，不安装依赖。
+- 工作流仅在 `codex/desktop-managed-agent` 的验收脚本、该工作流或验收 manifest 变更时自动执行，也支持手动触发；默认权限为 `contents: read`，仅该验收 job 为读取同仓库 Draft 使用 `contents: write`（GitHub 对 Draft 可见性要求具备 push 权限）。token 只注入下载步骤，不写 Release，不读取发布签名私钥或生产凭据，不安装依赖；checkout 不持久化凭据。
 - 所有安装目录、验收输出及应用数据位于 `RUNNER_TEMP`。安装使用当前用户模式，不提权、不修改系统安全策略、不关闭 SmartScreen/Defender/UAC，不使用 `--no-sandbox` 或忽略完整性校验。
 - 仅操纵由本次脚本启动且启动时间相符的进程及其后代，绝不按通用 `MiloCode`/`Electron` 名称全局杀进程。向导检查后终止本次尚未安装的进程树；静默安装、应用、卸载分别记录退出/阶段。
 - CDP 只监听 loopback，随机端口。读取页面及截图，不登录用户、不调用模型、不构造生产数据。无窗口、页面崩溃、空白 root、超时和卸载不完整均失败；诊断产物使用 `always()` 上传。

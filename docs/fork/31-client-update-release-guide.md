@@ -56,16 +56,18 @@ Windows 安装器使用配置中固定的完整 NSIS 工具链，移除 `ELECTRO
 
 Windows 使用标准 Ed25519 清单签名；Mac 使用 Sparkle 官方 EdDSA 工具，彼此不转换私钥格式。私钥只在发布机和独立加密备份中保存，客户端只包含公钥。
 
-Windows 密钥生成命令采用 `scripts/milocode-release.mjs keys`，默认私钥写入用户的 `Library/Application Support/MiloCode/ReleaseKeys/`（目录 0700、私钥 0600），禁止覆盖现有文件。标准输出只打印公钥配置和文件路径，不打印私钥。创建新发行身份前先确认密钥用途及备份位置；已有正式身份不要重复生成。
+Windows 密钥生成命令采用 `scripts/milocode-release.mjs keys`。工具旧默认路径为用户的 `Library/Application Support/MiloCode/ReleaseKeys/`，本次正式身份必须显式指定 `~/.config/milocode-release/keys/`（目录 0700、私钥 0600），禁止覆盖现有文件。标准输出只打印公钥配置和文件路径，不打印私钥。创建新发行身份前先确认密钥用途及备份位置；已有正式身份不要重复生成。
 
 Mac 使用固定 Sparkle 版本提供的 `generate_keys`，用独立 Keychain account 保存。发布脚本以 account 名调用 `generate_appcast`，不把私钥作为命令行参数或日志输出。
 
 ```sh
-node scripts/milocode-release.mjs keys --key-id milocode-win-2026
+node scripts/milocode-release.mjs keys --key-id milocode-win-2026-r2 --dir "$HOME/.config/milocode-release/keys"
 .cache/milocode-sparkle/2.10.1/bin/generate_keys --account milocode-updates
 ```
 
-正式 Windows 密钥已在本机 `Library/Application Support/MiloCode/ReleaseKeys/` 生成，正式 Mac 密钥已保存在 Keychain account `milocode-updates`；独立加密备份尚未完成，发布前必须补做。以上命令是创建新身份的操作说明，不要重新执行来替换当前密钥。Windows 命令只会显示公钥 JSON 和私钥路径，需把 `publicKeysJson` 配进构建参数 `MILOCODE_UPDATE_PUBLIC_KEYS_JSON`；Mac 输出的公钥配进 `MILOCODE_SPARKLE_PUBLIC_KEY`。私钥先做独立加密备份，再发布含公钥的引导版。不能将一次测试生成的密钥直接当作已备份的正式身份。
+Windows 原正式身份 `milocode-win-2026` 的私钥经搜索无法恢复，用户已于 2026-11-14 明确授权更换密钥，3.17.4 改用新身份 `milocode-win-2026-r2`。当前私钥位置为 `~/.config/milocode-release/keys/milocode-win-2026-r2.private.pem`（目录 `0700`、私钥 `0600`）；本机受保护恢复副本使用登录 Keychain generic-password，service `app.milo.code.release-signing`、account `milocode-win-2026-r2`，通过 Security framework 写入并仅在内存读回比较。此副本不代表跨设备或离线备份已经完成。正式 Mac 身份仍保存在 Keychain account `milocode-updates`，不随 Windows 更换而轮换。
+
+以上生成命令只是创建新身份的操作说明，既有身份不要再次执行；当前 Windows 新身份的完整授权、备份及重新构建规则见 [35 号记录](35-client-release-3.17.4.md#windows-发布身份恢复)。Windows 命令只会显示公钥 JSON 和私钥路径，需把 `publicKeysJson` 配进构建参数 `MILOCODE_UPDATE_PUBLIC_KEYS_JSON`；Mac 输出的公钥配进 `MILOCODE_SPARKLE_PUBLIC_KEY`。备份核验成功后才发布含公钥的引导版，不能将一次测试密钥当作已备份的正式身份。旧 Windows 3.17.3 只信任旧身份，必须从官方下载页手动安装一次新 3.17.4；后续更新由新身份连续验证，不能跳过验签迁移。
 
 ## 本地准备与发布命令
 
@@ -73,18 +75,18 @@ node scripts/milocode-release.mjs keys --key-id milocode-win-2026
 
 ```json
 {
-  "version": "3.17.3",
+  "version": "3.17.4",
   "baseUrl": "https://download.editor.vip/milocode/",
   "releaseNotesFile": "./release-notes.md",
   "windows": {
-    "installer": "./MiloCode-3.17.3-win-x64.exe",
-    "blockmap": "./MiloCode-3.17.3-win-x64.exe.blockmap",
-    "keyId": "milocode-win-2026",
-    "privateKeyFile": "/absolute/private/path/milocode-win-2026.private.pem"
+    "installer": "./MiloCode-3.17.4-win-x64.exe",
+    "blockmap": "./MiloCode-3.17.4-win-x64.exe.blockmap",
+    "keyId": "milocode-win-2026-r2",
+    "privateKeyFile": "/absolute/private/path/milocode-win-2026-r2.private.pem"
   },
   "mac": {
-    "archive": "./MiloCode-3.17.3-mac-arm64.zip",
-    "dmg": "./MiloCode-3.17.3-mac-arm64.dmg",
+    "archive": "./MiloCode-3.17.4-mac-arm64.zip",
+    "dmg": "./MiloCode-3.17.4-mac-arm64.dmg",
     "generateAppcast": "/absolute/path/to/.cache/milocode-sparkle/2.10.1/bin/generate_appcast",
     "account": "milocode-updates"
   }
@@ -94,9 +96,9 @@ node scripts/milocode-release.mjs keys --key-id milocode-win-2026
 `windows` / `mac` 可只提供一项；正式双平台引导版应在真实验收后一起准备。Mac `dmg` 和 Windows `blockmap` 可省略，Mac appcast 的更新目标固定由 ZIP 生成。发布说明内嵌 appcast，本地 `.md` 只作生成器输入，不上传到发布桶。
 
 ```sh
-node scripts/milocode-release.mjs prepare --config /private/local/release.json --out output/milocode-release/3.17.3
-node scripts/milocode-release.mjs publish --dir output/milocode-release/3.17.3 --dry-run
-node scripts/milocode-release.mjs publish --dir output/milocode-release/3.17.3
+node scripts/milocode-release.mjs prepare --config /private/local/release.json --out output/milocode-release/3.17.4
+node scripts/milocode-release.mjs publish --dir output/milocode-release/3.17.4 --dry-run
+node scripts/milocode-release.mjs publish --dir output/milocode-release/3.17.4
 ```
 
 最后一条需要已配置管理员会话环境变量（推荐）、已有完整管理员 Key 环境变量或直接 S3 环境变量，并有可访问的下载域名。输出目录必须不存在；不在同一目录反复重建不同字节的同版本包。Windows 公钥也会作为公开信息记录在本地上传计划中，但私钥和密钥文件路径不会进入计划或上传对象。
