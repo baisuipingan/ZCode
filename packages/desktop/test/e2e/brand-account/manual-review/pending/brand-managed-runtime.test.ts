@@ -691,6 +691,183 @@ const multiModels = () => [
   },
 ];
 
+test("MV04: official context and bounded equality survive without reserving output", async () => {
+  const f = await setup();
+  const host = f.host();
+  try {
+    f.gateway.state.schemaVersion = 4;
+    f.gateway.state.overrideModels = [
+      {
+        ...multiModels()[0]!,
+        context_window: 1048576,
+        max_output_tokens: 393216,
+        default_max_output_tokens: 4096,
+      },
+    ];
+    await host.service.login(login(1));
+    let policy = await configured(host);
+    assert.equal(policy.models[0]!.modelConfig.properties.contextWindow, 1048576);
+    assert.equal(policy.models[0]!.modelConfig.optionSpecs.maxOutputTokens.max, 4096);
+    assert.deepEqual(f.gateway.state.bootstrapProtocols, [4]);
+    for (const kind of [undefined, "", "fixed"]) {
+      f.gateway.state.overrideModels = [
+        {
+          ...multiModels()[0]!,
+          max_output_tokens: 128000,
+          ...(kind === undefined ? {} : { output_limit_kind: kind }),
+        },
+      ];
+      await host.service.refreshAgentConfig({ force: true });
+      policy = await configured(host);
+      assert.equal(policy.models[0]!.modelConfig.properties.contextWindow, 128000);
+      assert.equal(policy.models[0]!.modelConfig.optionSpecs.maxOutputTokens.max, 4096);
+    }
+    assert.equal(f.gateway.state.modelRequests.length, 0);
+    assert.deepEqual(f.gateway.state.violations, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("MV04: unknown and unlimited output retain a positive operational budget and v3 scope", async () => {
+  const f = await setup();
+  const host = f.host();
+  try {
+    f.gateway.state.schemaVersion = 4;
+    for (const kind of ["unlimited", "not_published"]) {
+      f.gateway.state.overrideModels = [
+        {
+          ...multiModels()[0]!,
+          context_window: 500000,
+          max_output_tokens: 0,
+          output_limit_kind: kind,
+        },
+      ];
+      await host.service.login(login(1));
+      const policy = await configured(host);
+      assert.equal(policy.models[0]!.modelConfig.properties.contextWindow, 500000);
+      const budget = policy.models[0]!.modelConfig.optionSpecs.maxOutputTokens;
+      assert.equal(budget.max, 4096);
+      assert(!budget.map.includes("499999"));
+      assert.equal(policy.billingBinding.policyRevision, f.gateway.state.authorizationScope);
+      assert.equal((await resolvePolicy(host, policy)).apiKey, "E2E_MI_AGENT_1");
+      f.gateway.state.overrideModels = [];
+      f.gateway.state.noDefault = true;
+      f.gateway.state.unavailableModels = [
+        {
+          model_id: MI_MODEL,
+          display_name: "Unavailable model",
+          reason_code: "model_unavailable",
+        },
+      ];
+      await host.service.refreshAgentConfig({ force: true });
+      const empty = await configured(host);
+      assert.deepEqual(empty.models, []);
+      assert.equal(empty.defaultSelection, null);
+      assert.equal(empty.unavailableModels?.[0]?.modelId, MI_MODEL);
+      await assert.rejects(resolvePolicy(host, policy), { code: "model_unavailable" });
+      await host.service.logout();
+      f.gateway.state.noDefault = false;
+      f.gateway.state.unavailableModels = [];
+    }
+    assert.equal(f.gateway.state.modelRequests.length, 0);
+    assert.deepEqual(f.gateway.state.violations, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("MV04: legacy versions keep strict limits and v4 rejects contradictory output kinds", async () => {
+  const f = await setup();
+  const host = f.host();
+  try {
+    for (const version of [1, 2, 3, 4]) {
+      f.gateway.state.schemaVersion = version;
+      const candidates =
+        version === 4
+          ? [
+              { output_limit_kind: "unlimited", max_output_tokens: 8192 },
+              { output_limit_kind: "not_published", max_output_tokens: 8192 },
+              { output_limit_kind: "fixed", max_output_tokens: 0 },
+              { output_limit_kind: "fixed", max_output_tokens: 128001 },
+              { output_limit_kind: "bounded", max_output_tokens: 8192 },
+              { output_limit_kind: "invented", max_output_tokens: 0 },
+              {
+                output_limit_kind: "unlimited",
+                max_output_tokens: 0,
+                default_max_output_tokens: 128001,
+              },
+            ]
+          : [
+              { max_output_tokens: 128000 },
+              { max_output_tokens: 0 },
+              { output_limit_kind: "fixed" },
+            ];
+      for (const candidate of candidates) {
+        f.gateway.state.overrideModel = candidate;
+        await host.service.login(login(1));
+        await waitInference(host, "unavailable");
+        assert.equal((await host.service.getSnapshot()).inference.error?.code, "invalid_response");
+        assert.equal(host.inference.getPolicy().state, "blocked");
+        await host.service.logout();
+      }
+    }
+    assert(f.gateway.state.bootstrapProtocols.every((version) => version === 4));
+    assert.equal(f.gateway.state.modelRequests.length, 0);
+    assert.deepEqual(f.gateway.state.violations, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("MV04: an exact old-service rejection downgrades once within the same account", async () => {
+  const f = await setup();
+  const host = f.host();
+  try {
+    f.gateway.state.schemaVersion = 3;
+    f.gateway.state.maxProtocolVersion = 3;
+    await host.service.login(login(1));
+    const first = await configured(host);
+    assert.deepEqual(f.gateway.state.bootstrapProtocols, [4, 3]);
+    assert.equal((await resolvePolicy(host, first)).apiKey, "E2E_MI_AGENT_1");
+    await host.service.logout();
+    await host.service.login(login(2));
+    const second = await configured(host);
+    assert.deepEqual(f.gateway.state.bootstrapProtocols, [4, 3, 4, 3]);
+    await assert.rejects(resolvePolicy(host, first));
+    assert.equal((await resolvePolicy(host, second)).apiKey, "E2E_MI_AGENT_2");
+    assert.equal(f.gateway.state.modelRequests.length, 0);
+    assert.deepEqual(f.gateway.state.violations, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("MV04: authentication replay and unrelated HTTP errors never downgrade the protocol", async () => {
+  const f = await setup();
+  const host = f.host();
+  try {
+    f.gateway.state.schemaVersion = 4;
+    f.gateway.state.bootstrapRejectOnce = true;
+    await host.service.login(login(1));
+    await configured(host);
+    assert.deepEqual(f.gateway.state.bootstrapProtocols, [4, 4]);
+    await host.service.logout();
+    for (const status of [400, 401, 403, 429, 503]) {
+      f.gateway.state.bootstrapFailureStatus = status;
+      await host.service.login(login(1));
+      await waitInference(host, "unavailable");
+      assert.equal(host.inference.getPolicy().state, "blocked");
+      await host.service.logout();
+    }
+    assert(f.gateway.state.bootstrapProtocols.every((version) => version === 4));
+    assert.equal(f.gateway.state.modelRequests.length, 0);
+    assert.deepEqual(f.gateway.state.violations, []);
+  } finally {
+    await f.close();
+  }
+});
+
 test("MM01/03: protocol2 applies two independent models and revokes removed members on reconnect", async () => {
   const f = await setup();
   let host = f.host();

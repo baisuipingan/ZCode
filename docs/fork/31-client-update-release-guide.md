@@ -26,6 +26,8 @@ milocode/stable/darwin-arm64/appcast.xml
 
 浏览器验收使用真实设置与更新组件，覆盖中英文、明暗主题、390px / 1200px、下载前 / 下载中 / 下载完成、等待期间不可重复提交，且渲染本身不会启动下载。工程签名和发布工具测试通过 `pnpm test:milocode-updates` 执行，也纳入现有 `test:engineering-tools` 入口；UI 使用 `pnpm test:milocode-update-ui`，不新增 App 业务单测。
 
+Windows 安装器使用配置中固定的完整 NSIS 工具链，移除 `ELECTRON_BUILDER_NSIS_DIR`、`ELECTRON_BUILDER_NSIS_RESOURCES_DIR` 和 `NSISDIR` 外部覆盖；不得拼接不同版本的编译器与 stub。最终 EXE 需逐帧校验安装器及内嵌应用的图标，并在 Windows 运行同一摘要的文件，验证向导显示、安装、应用启动与卸载。离线解包和哈希通过仅代表静态检查，不代表实机通过；缺少运行证据的候选不更新正式 stable。原因与回归见 [Windows 工具链修复记录](34-windows-installer-toolchain-repair.md)。
+
 ## 外部配置与秘密
 
 推荐让 Sub2API 管理端持有对象存储凭据，发布机使用短时管理员会话；已有完整管理员 API Key 也可走后台现有标准鉴权：

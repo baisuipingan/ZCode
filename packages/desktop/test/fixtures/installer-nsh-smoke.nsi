@@ -41,13 +41,16 @@ Var keepShortcuts
 ; 回归原因：electron-builder 异步生成 header 时，自定义 include 可能先于插件目录注册。
 ; 普通场景使用真实 UAC 判据，避免恒假替身掩盖插件尚未可用的编译错误。
 !addplugindir /x86-unicode "${NSIS_PLUGIN_DIR}"
+; 真实 Builder 对安装器和卸载器都会在插件注册后展开 customHeader。
+!insertmacro customHeader
 !ifndef BUILD_UNINSTALLER
-  ; electron-builder inserts customHeader after assistedInstaller.nsh generated the directory page.
-  !insertmacro customHeader
   !ifdef allowToChangeInstallationDirectory
     !error "customHeader must enable shortcut preservation for manual overwrite"
   !endif
   !insertmacro customPageAfterChangeDir
+  ; 与正式模板一样提供标准安装页和语言表，严格编译时不能靠遗漏页面绕过 MUI 校验。
+  !insertmacro MUI_PAGE_INSTFILES
+  !insertmacro MUI_LANGUAGE "English"
 
   Function .onInit
     !insertmacro preInit

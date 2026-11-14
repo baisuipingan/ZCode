@@ -35,6 +35,7 @@
     Call ${ZCODE_UNINSTALLER_FUNCTION_PREFIX}ZCodeWriteUninstallerLog
   !macroend
 
+  !macro ZCodeDefineUninstallerLogFunction
   Function ${ZCODE_UNINSTALLER_FUNCTION_PREFIX}ZCodeWriteUninstallerLog
     Exch $R9
     Push $R0
@@ -61,6 +62,7 @@
       Pop $R0
       Pop $R9
   FunctionEnd
+  !macroend
 
   !macro customRemoveFilesDiagnosticsStart
     !insertmacro ZCodeReportUninstallerStage "cleanup-started"
@@ -153,6 +155,7 @@
     Call ZCodeWriteInstallerLog
   !macroend
 
+  !macro ZCodeDefineInstallerLogFunction
   Function ZCodeWriteInstallerLog
     Exch $R9
     Push $R0
@@ -187,6 +190,7 @@
       Pop $R0
       Pop $R9
   FunctionEnd
+  !macroend
 
   Function ZCodeResetUninstallerLog
     StrCpy $ZCodeUninstallerDetailsUnavailable ""
@@ -314,6 +318,14 @@
 !define ZCODE_INSTALL_DIR_BACK_BUTTON_WIDTH 180
 
 !macro customHeader
+  ; 修复原因：统一 NSIS 3.12 会拒绝重新注册已经使用的插件，Builder 在 include 本文件后
+  ; 才注册完整插件目录。因此含插件调用的函数仅在此阶段编译，安装/卸载调用顺序保持原样。
+  !ifdef BUILD_UNINSTALLER
+    !insertmacro ZCodeDefineUninstallerLogFunction
+  !else
+    !insertmacro ZCodeDefineInstallerLogFunction
+    !insertmacro ZCodeDefineShortcutTargetFunction
+  !endif
   !ifndef BUILD_UNINSTALLER
     ; 修复原因：异步生成的 header 可能先 include 本文件，再注册 UAC 插件目录。
     ; 在 customHeader 展开函数，确保插件已注册；preInit 仍调用同一函数和真实 UAC 判据。
@@ -364,6 +376,7 @@
 !ifndef BUILD_UNINSTALLER
   ; 修复原因：electron-builder 会先编译卸载器，但快捷方式目标读取只在安装更新流程中调用。
   ; 若把函数带入卸载器，NSIS 会产生 6010 未引用告警，并在 /WX 下直接中断 Windows CI。
+  !macro ZCodeDefineShortcutTargetFunction
   Function ZCodeReadShortcutTarget
     Exch $R9
     Push $R1
@@ -386,6 +399,7 @@
       Pop $R1
       Exch $R9
   FunctionEnd
+  !macroend
 !endif
 
 !macro ZCodeRepairShortcutIfNeeded SHORTCUT_PATH LABEL_PREFIX

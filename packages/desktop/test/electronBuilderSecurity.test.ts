@@ -135,6 +135,34 @@ it("精确锁定 Electron 44 与配套打包更新工具链", async () => {
   expect(require("electron-updater/package.json").version).toBe("6.8.10");
 });
 
+it("Windows 使用 Builder 支持的完整 NSIS 工具链，保留向导与图标编辑", async () => {
+  vi.stubEnv("ZCODE_TARGET_OS", "win32");
+  const { default: config } = await import("../electron-builder.config.js");
+  expect(config.toolsets?.nsis).toBe("1.2.1");
+  expect(config.nsis?.customNsisBinary).toBeUndefined();
+  expect(config.nsis?.customNsisResources).toBeUndefined();
+  expect(config.nsis?.oneClick).toBe(false);
+  expect(config.nsis?.allowToChangeInstallationDirectory).toBe(true);
+  expect(config.win?.signAndEditExecutable).not.toBe(false);
+});
+
+it.each([
+  "ELECTRON_BUILDER_NSIS_DIR",
+  "ELECTRON_BUILDER_NSIS_RESOURCES_DIR",
+  "NSISDIR",
+])("Windows 构建拒绝 %s 绕过固定工具链", async (key) => {
+  vi.stubEnv("ZCODE_TARGET_OS", "win32");
+  vi.stubEnv(key, "/old-mixed-toolchain");
+  await expect(import("../electron-builder.config.js")).rejects.toThrow(key);
+});
+
+it("NSIS 约束不阻断 macOS 构建", async () => {
+  vi.stubEnv("ZCODE_TARGET_OS", "darwin");
+  vi.stubEnv("ELECTRON_BUILDER_NSIS_DIR", "/irrelevant-for-mac");
+  const { default: config } = await import("../electron-builder.config.js");
+  expect(config.nsis?.installerIcon).toBe("build/icon_installer.ico");
+});
+
 it("安装包使用 desktop 依赖中的唯一 Electron 版本，并声明 macOS 13 下限", async () => {
   const desktopPackage = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),

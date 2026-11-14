@@ -18,6 +18,7 @@ import { createBrowserLogin, exchangeBrowserAuthorization } from "./browserLogin
 import { createAccountPaymentActions } from "./paymentActions.js";
 import { initialAccountSnapshot } from "./initialSnapshot.js";
 import { createSettlementRefresh } from "./settlementRefresh.js";
+import { requestInferenceBootstrap } from "./inferenceBootstrap.js";
 
 export interface CreateBrandAccountServiceOptions {
   baseUrl: string;
@@ -68,14 +69,16 @@ export function createBrandAccountService(options: CreateBrandAccountServiceOpti
     },
     bootstrap: async () => {
       const session = await requireSession();
-      const result = await authenticated(
-        "/desktop/bootstrap",
-        {
-          client_version: options.managedInference!.clientVersion,
-          protocol_version: 3,
-          platform: options.managedInference!.platform,
-        },
-        session,
+      const result = await requestInferenceBootstrap((protocolVersion) =>
+        authenticated(
+          "/desktop/bootstrap",
+          {
+            client_version: options.managedInference!.clientVersion,
+            protocol_version: protocolVersion,
+            platform: options.managedInference!.platform,
+          },
+          session,
+        ),
       );
       return { data: result.data, identity: identity(result.session) };
     },

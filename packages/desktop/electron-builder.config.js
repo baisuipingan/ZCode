@@ -58,6 +58,21 @@ import {
 
 const buildMetadata = getBuildMetadata();
 const targetPlatform = getTargetPlatform();
+if (targetPlatform.os === "win32") {
+  // 修复原因：3.17.3 曾以 Homebrew 1024 字符编译器混用 Builder 8192 字符 stub，
+  // 变量区分配与运行时寻址不一致，安装器在显示界面前就会越界。只用下方固定的完整套装。
+  for (const key of [
+    "ELECTRON_BUILDER_NSIS_DIR",
+    "ELECTRON_BUILDER_NSIS_RESOURCES_DIR",
+    "NSISDIR",
+  ]) {
+    if (process.env[key]?.trim()) {
+      throw new Error(
+        `Remove ${key} before building Windows: MiloCode requires the complete pinned NSIS toolset.`,
+      );
+    }
+  }
+}
 const miloCodeUpdateConfig = await resolveBuildTimeConfig();
 const shouldPackageMiloCodeSparkle =
   targetPlatform.os === "darwin" &&
@@ -664,6 +679,8 @@ function signWindowsBrowserImportHelper(context) {
 /** @type {import("electron-builder").Configuration} */
 export default {
   appId: desktopProductIdentity.appId,
+  // 26.17.0 自带校验摘要的完整 3.12 套装，包含 ARM Mac 编译器及与之匹配的 Windows stub。
+  toolsets: { nsis: "1.2.1" },
   // Linux deb 打包（fpm）会校验 package metadata 中的 homepage、author.email、maintainer。
   // CI 环境下若这些字段缺失会在产物阶段直接失败。这里统一在构建配置补齐，避免依赖外部注入。
   extraMetadata: {

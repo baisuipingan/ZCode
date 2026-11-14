@@ -1,4 +1,4 @@
-import { failure } from "./errors.js";
+import { BootstrapProtocolUnsupported, failure } from "./errors.js";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -83,6 +83,20 @@ export function createAccountHttpClient(baseUrl: string, fetchImpl: typeof globa
             ? (envelope.metadata as JsonRecord)
             : {};
         const reason = text(envelope.reason, text(metadata.reason)).toUpperCase();
+        // 旧服务拒绝尚不认识的v4时只有这个固定错误形状；限定路径、请求版本和全部字段，
+        // 不把普通400、认证失败、权限/网络故障误判成协商信号，也不转发服务端原始文案。
+        if (
+          path === "/desktop/bootstrap" &&
+          input?.body !== null &&
+          typeof input?.body === "object" &&
+          "protocol_version" in input.body &&
+          input.body.protocol_version === 4 &&
+          response.status === 400 &&
+          envelope.code === 400 &&
+          envelope.reason === "DESKTOP_AGENT_INVALID" &&
+          envelope.message === "invalid desktop agent request or configuration"
+        )
+          throw new BootstrapProtocolUnsupported();
         if (response.status === 429 || response.status === 503) {
           const retry = response.headers.get("retry-after");
           const milliseconds =

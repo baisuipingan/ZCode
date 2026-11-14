@@ -15,7 +15,7 @@ Sub2API 实时公开版本为 `0.2.21-ds.14`、健康状态 `ok`，与已有部�
 - macOS 包检查挂载、应用身份与架构，并用隔离数据目录验证已打包应用启动、本地浏览及内置终端。生产包固定账户origin，模型/文件完整合成链路沿用26号本地原生验收；Windows 进行安装器和内嵌资源校验，本机不能代替 Windows 安装运行验收。
 - 完成后回填产物、摘要、运行结果和限制；不将未签名包称作已完成正式发行验收。
 
-Windows 交叉打包的默认缓存 NSIS 编译器为 Intel 程序，本机没有 Rosetta，实际报 `spawn Unknown system error -86`。本轮仅在产物日志目录创建隔离 NSIS 工具入口，使用已经安装的 Homebrew ARM64 NSIS 3.12，通过 electron-builder 的 `ELECTRON_BUILDER_NSIS_DIR` 指向该入口。3.12 自带语言文件与 builder 的旧模板不一致，严格警告校验阻断后，将隔离入口的 includes/stubs 切回 builder 已缓存的原套装，保留原插件/elevate、native 3.12 编译器和 warnings-as-errors，最终构建通过。未安装 Rosetta、修改全局缓存或跳过原生资源检查。
+Windows 交叉打包的默认缓存 NSIS 编译器为 Intel 程序，本机没有 Rosetta，实际报 `spawn Unknown system error -86`。本轮曾在产物日志目录创建隔离 NSIS 工具入口，以 Homebrew ARM64 NSIS 3.12 编译器配合 builder 缓存的旧 includes/stubs，通过构建。**2026-11-14 复查确认此做法违反 NSIS 编译器与 stub 必须一致的要求，不能继续使用，构建成功也不能证明安装器正常。** 缺陷证据与替代规则见 [34号修复记录](34-windows-installer-toolchain-repair.md)。本次历史产物和日志保留供排查。
 
 ## 结果
 

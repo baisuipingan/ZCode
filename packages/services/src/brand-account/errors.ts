@@ -61,6 +61,13 @@ export class AccountFailure extends Error {
   }
 }
 
+/** 仅HTTP层识别旧bootstrap版本拒绝；仍只投影既有安全错误，不暴露原始响应。 */
+export class BootstrapProtocolUnsupported extends AccountFailure {
+  constructor() {
+    super("request_rejected");
+  }
+}
+
 export function failure(code: BrandAccountErrorCode, retryAfterMs?: number): AccountFailure {
   return new AccountFailure(code, retryAfterMs);
 }

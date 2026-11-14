@@ -1,5 +1,11 @@
 # W3：托管推理验收场景与证据
 
+## 2026-11-14 官方限制与 bootstrap protocol 4
+
+MV04 复用现有本地 HTTP、加密账户 Host、私有授权 resolver 和真实 Registry 投影：验证官方上下文不扣输出、缺省/空/fixed 输出可等于上下文、unknown/unlimited 输出为零但请求预算保持正数、scope/空目录/逐模型不可用仍按 v3 隔离；1/2/3 不接受零输出、新字段或输出等于上下文，v4 也不接受额外的 bounded 别名。精确旧服务版本拒绝仅回退一次到 v3，换号后旧授权不可用；401 认证重放仍请求 v4，普通 400/403/429/503 不降级。所有场景均未请求模型接口。
+
+Node v24.19.0/macOS 本地验收：`brand-managed-runtime.test.ts` 34/34；连同 `brand-managed-delivery.test.ts`、`brand-account-admission.test.ts`、`brand-account-runtime.test.ts` 共 65/65。执行入口为仓库根 `pnpm --filter @zcode/desktop exec tsx --test` 加上述 `test/e2e/brand-account/manual-review/pending/` 文件路径。`pnpm typecheck`、`pnpm lint`（84 个既有警告、0 错误）和 `pnpm architecture:check --changed` 通过，修改的 6 个 TS 文件定向 lint 为 0 警告/0 错误。freshness 脚本的远端 fetch 因 GitHub 超时未完成；没有构建安装包、发布、提交或真实付费验证，不把本地 HTTP 证据当成安装包或生产验收。
+
 ## 2026-11-13 恢复与执行后同步
 
 - RC01：逐项验证已知 bootstrap 不可用原因及未知原因的安全映射；不暴露任意服务端正文。

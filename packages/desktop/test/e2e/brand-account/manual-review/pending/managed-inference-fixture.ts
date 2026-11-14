@@ -45,6 +45,8 @@ export async function createManagedInferenceFixture(outputFile: string) {
     overrideModel: null as Record<string, unknown> | null,
     overrideModels: null as Array<Record<string, unknown>> | null,
     schemaVersion: 2,
+    bootstrapProtocols: [] as number[],
+    maxProtocolVersion: 4,
     configRevision: "e2e-mi-1",
     overrideSelection: null as Record<string, unknown> | null,
     bootstrapRejectOnce: false,
@@ -335,13 +337,28 @@ export async function createManagedInferenceFixture(outputFile: string) {
         return reply({ items: [], total: 0, page: 1, page_size: 20 });
       if (path === "/api/v1/desktop/bootstrap") {
         assert.equal(request.method, "POST");
-        assert.equal(body.protocol_version, 3);
+        assert([3, 4].includes(Number(body.protocol_version)));
+        state.bootstrapProtocols.push(Number(body.protocol_version));
         assert(["darwin", "win32"].includes(String(body.platform)));
         assert(
           Object.keys(body).every((key) =>
             ["client_version", "protocol_version", "platform", "installation_id"].includes(key),
           ),
         );
+        if (Number(body.protocol_version) > state.maxProtocolVersion) {
+          response.writeHead(400, {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+          });
+          response.end(
+            JSON.stringify({
+              code: 400,
+              message: "invalid desktop agent request or configuration",
+              reason: "DESKTOP_AGENT_INVALID",
+            }),
+          );
+          return;
+        }
         if (state.bootstrapRejectOnce) {
           state.bootstrapRejectOnce = false;
           return reply({}, 401);
@@ -398,9 +415,9 @@ export async function createManagedInferenceFixture(outputFile: string) {
               ...state.overrideModel,
             },
           ],
-          ...(state.schemaVersion === 3 ? { unavailable_models: state.unavailableModels } : {}),
+          ...(state.schemaVersion >= 3 ? { unavailable_models: state.unavailableModels } : {}),
           selection_policy:
-            state.schemaVersion === 3
+            state.schemaVersion >= 3
               ? {
                   default: state.noDefault
                     ? null
@@ -424,7 +441,7 @@ export async function createManagedInferenceFixture(outputFile: string) {
             key: state.credentialKey ?? `E2E_MI_AGENT_${account}`,
             scope: "e2e-managed",
             expires_at: state.credentialExpiresAt,
-            ...(state.schemaVersion === 3 ? { authorization_scope: state.authorizationScope } : {}),
+            ...(state.schemaVersion >= 3 ? { authorization_scope: state.authorizationScope } : {}),
           },
         });
       }

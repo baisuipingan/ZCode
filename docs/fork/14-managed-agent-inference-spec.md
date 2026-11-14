@@ -32,6 +32,15 @@ sequenceDiagram
 - 钱包读取与模型配置初始化独立启动；余额暂时不可读不应阻止同账户合法推理配置同步。实际消费权限仍由网关余额规则决定，客户端不臆测余额或先行扣费。
 - `configuration_changed` 表示bootstrap领取期间管理员保存了新配置，不是确证失效；同flight最多完整补取一次，重复竞态按临时同步失败保留旧配置，不能因一次正常保存清空运行任务。
 - bootstrap protocol 3：ready `models` 允许空数组；`unavailable_models` 列出单模型失效原因；`selection_policy` 为 `{default:{model_id,reasoning_level,max_output_tokens}|null,auxiliary:"inherit-main"}`。默认模型失效时无默认，不静默挑选另一模型。1/2 原合同保留。管理保存仍全量严格，运行期按模型隔离目录/白名单/思考策略变化；查询失败返回HTTP错误，不伪造空目录。
+- bootstrap protocol 4（2026-11-14）：完整保留 protocol 3 的授权 scope、空目录和逐模型不可用合同。模型 `context_window` 直接采用官方总上下文或官方独立输入上限，不提前扣减最大输出。新增可选 `output_limit_kind`；缺省、空串或 `fixed` 表示已公布的正数输出上限，允许等于上下文；`unlimited` 与 `not_published` 必须以 `max_output_tokens:0` 表示无独立上限或官方未公布，不能把 API 默认值或上下文减一冒充官方上限。`default_max_output_tokens` 始终为不超过上下文的正数运营请求预算，客户端只把它投影为现有 optionSpecs 预算，并继续沿用运行时剩余上下文限制。1/2/3 的严格校验不放宽，思考 none 和工具能力不变。
+- Host 每次优先请求 protocol 4；仅 HTTP 400 且服务端明确报告“不支持该 bootstrap 协议版本”时，同一已校验账户内有界回退一次 protocol 3。认证失败、权限失败、网络/限流/服务故障及非法响应不触发协议回退；回退仍走原认证会话校验、刷新与 epoch fence，不缓存别的账户凭据或创建第二个请求所有者。
+
+```text
+Host 原账户 bootstrap singleflight → protocol 4
+  ├─ 成功 → 严格版本校验 → 原 scope/epoch fence → 发布非秘密模型策略
+  ├─ 明确不支持版本 → 同一账户 protocol 3 一次 → 原版本校验与 fence
+  └─ 其他失败 → 原错误/恢复路径，不降级
+```
 - `credential.authorization_scope` 为组、网关、Key身份的稳定服务端hash；现有 `billingBinding.policyRevision` 承载该scope而非目录版本（旧schema仍用旧配置版本）。目录revision用于应用ACK，账号/origin/epoch、凭据/路由scope仍隔离。逐attempt另传执行模型配置指纹，Host对当前成员和指纹验证，名称/新增/默认变化不使无关模型失效。
 - 新增/改名/默认变更发布新Registry，不关闭resident session、不杀工具或已有SSE。删除/参数不兼容在下一模型请求拒绝；输入、成果和显式选型保留。Host授权IO完成后复核最新策略、身份及代次，不以旧对象引用误拒兼容更新。
 - CLI新轮和自动queue提升复用runtime-headers反向请求，`phase:"admission"` 等待Host freshness并确认该CLI最新Registry ACK；普通attempt不做freshness网络依赖，携带`modelConfigRevision`防止冻结模型绕过新能力/预算。保留原CommandInbox、owner/lease、队列和重放语义，不新增accepted queue。

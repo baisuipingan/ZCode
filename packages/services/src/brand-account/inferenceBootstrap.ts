@@ -5,7 +5,7 @@ import {
   type ManagedBillingBinding,
   type ManagedProviderPolicy,
 } from "@zcode/shared/model-selection";
-import { failure } from "./errors.js";
+import { BootstrapProtocolUnsupported, failure } from "./errors.js";
 import type { BrandAccountErrorCode } from "./contract.js";
 
 const boundedText = z.string().trim().min(1).max(256);
@@ -39,6 +39,11 @@ const modelSchema = z
     supports_mid_conversation_system: z.boolean(),
   })
   .strict();
+
+const modelV4Schema = modelSchema.extend({
+  max_output_tokens: positive.or(z.literal(0)),
+  output_limit_kind: z.enum(["", "fixed", "unlimited", "not_published"]).optional(),
+});
 
 const bootstrapSchema = z
   .object({
@@ -114,6 +119,12 @@ const bootstrapSchema = z
   })
   .strict();
 
+const bootstrapV4Schema = bootstrapSchema.extend({
+  schema_version: z.literal(4),
+  models: z.array(modelV4Schema).max(32).optional(),
+});
+const supportedBootstrapSchema = z.union([bootstrapSchema, bootstrapV4Schema]);
+
 export interface BrandInferenceIdentity {
   origin: string;
   accountRef: string;
@@ -122,6 +133,18 @@ export interface BrandInferenceIdentity {
 
 /** 服务端领取期间配置被替换；是有界重读信号，而非凭据已失效。 */
 export class BootstrapConfigurationChanged extends Error {}
+
+export async function requestInferenceBootstrap<T>(
+  request: (protocolVersion: 3 | 4) => Promise<T>,
+): Promise<T> {
+  try {
+    return await request(4);
+  } catch (error) {
+    if (!(error instanceof BootstrapProtocolUnsupported)) throw error;
+    // 原因：旧服务尚不认识v4；只协商一次，回退请求仍由原账户owner校验epoch和凭据。
+    return request(3);
+  }
+}
 
 /** 后端只给能力和参数语义；CEL 映射由客户端固定构造，不执行远端表达式。 */
 export function parseInferenceBootstrap(
@@ -133,7 +156,7 @@ export function parseInferenceBootstrap(
   keyId: string;
   expiresAt: number | null;
 } {
-  const parsed = bootstrapSchema.safeParse(value);
+  const parsed = supportedBootstrapSchema.safeParse(value);
   if (!parsed.success) throw failure("invalid_response");
   const data = parsed.data;
   if (data.service_status !== "ready") {
@@ -166,7 +189,7 @@ export function parseInferenceBootstrap(
     );
   }
   const { provider, selection_policy, credential } = data;
-  const v3 = data.schema_version === 3;
+  const v3 = data.schema_version >= 3;
   if (
     v3
       ? !selection_policy ||
@@ -219,8 +242,18 @@ export function parseInferenceBootstrap(
         !item.output.text ||
         !item.supports_tool_call ||
         !item.supports_streaming ||
-        item.default_max_output_tokens > item.max_output_tokens ||
-        item.max_output_tokens >= item.context_window ||
+        // 原因：v4区分官方物理上限与运营预算；未知/无独立上限的0不能作为请求预算。
+        // 旧协议仍原样要求正数输出且严格小于上下文，不能借新字段放宽旧校验。
+        (data.schema_version === 4
+          ? item.default_max_output_tokens > item.context_window ||
+            ("output_limit_kind" in item &&
+            (item.output_limit_kind === "unlimited" || item.output_limit_kind === "not_published")
+              ? item.max_output_tokens !== 0
+              : item.max_output_tokens <= 0 ||
+                item.default_max_output_tokens > item.max_output_tokens ||
+                item.max_output_tokens > item.context_window)
+          : item.default_max_output_tokens > item.max_output_tokens ||
+            item.max_output_tokens >= item.context_window) ||
         !item.reasoning_levels.includes(item.default_reasoning) ||
         new Set(item.reasoning_levels).size !== item.reasoning_levels.length ||
         item.reasoning_levels.some(
@@ -298,6 +331,7 @@ export function parseInferenceBootstrap(
               : "{}",
           },
           maxOutputTokens: {
+            // 此max是既有单次请求预算；不把未知官方上限投影为0或上下文减一。
             max: model.default_max_output_tokens,
             map: `{"max_output_tokens": maxOutputTokens > ${model.default_max_output_tokens} ? ${model.default_max_output_tokens} : maxOutputTokens}`,
           },
