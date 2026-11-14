@@ -60,3 +60,11 @@ NSIS 3.12 统一套装包含内置和扩展插件。Builder 先 include `install
 - CDP 只监听 loopback，随机端口。读取页面及截图，不登录用户、不调用模型、不构造生产数据。无窗口、页面崩溃、空白 root、超时和卸载不完整均失败；诊断产物使用 `always()` 上传。
 - 自动验收覆盖 Windows runner 上的最终包可运行性，不代替真实用户机器的 SmartScreen 声誉、不同 DPI/语言和人工审美验收。未实际运行时只报告静态检查通过，不能报告安装通过。
 - 本机验证：官方 PowerShell 7.4.6（归档 SHA256 校验通过）Parser 无语法错误，Win32 窗口探针 C# 编译通过；使用本地 WebSocket fixture 验证 CDP 异步通信、事件过滤和超过 64 KiB 的响应重组。工作流 YAML、manifest JSON、架构和 diff 检查通过。此记录不代表 Windows 安装/启动已通过，需以后续 workflow 结果为准。
+
+## 最终包运行后的 CDP 验收探针修复
+
+Windows 实际验收 run `43564372035` 已通过最终 EXE 摘要、可见安装向导和实际安装；随后 renderer 就绪检查的 `ContainsKey` 调用失败。证据指向 PowerShell/.NET 互操作：`ConnectAsync`、`SendAsync` 的 `GetAwaiter().GetResult()` 将内部 `VoidTaskResult` 输出到函数成功流，与预期的 CDP Hashtable 混合。该观察属于验收脚本返回值污染，不能据此认定应用启动失败；保留本轮失败结果，不放宽页面就绪条件或重构建 App。
+
+修复只显式丢弃两次无业务返回值的异步操作结果；`Invoke-Cdp` 唯一成功输出仍为对应请求的 `result`。工程回归必须使用真实 loopback WebSocket、过滤异步事件和无关响应、重组超过 64 KiB 的分片响应，并断言只返回一个 Hashtable。若本机运行时不暴露内部 `VoidTaskResult`，注入等价的非空完成值再次验证；页面就绪、截图、安装及卸载门禁保持不变。
+
+本机 PowerShell 7.4.6 的真实连接未暴露该内部值，`scripts/test/windows-installer-cdp.test.ps1` 因此从正式脚本提取函数、仅替换 socket 工厂来注入非空 Task 完成值。修前严格复现三个输出（两个完成值与一个 Hashtable）；修后仅返回一个 Hashtable。真实 loopback WebSocket 的异步事件、无关 ID 和 70,000 字符分片响应回归同时通过。日志保存在 `output/3.17.4-release-audit/windows-cdp-transport/`；Windows workflow 先运行该返回值回归，再对相同最终 EXE 重做完整验收。

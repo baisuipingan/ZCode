@@ -113,10 +113,11 @@ function Invoke-Cdp([string]$SocketUrl, [string]$Method, [hashtable]$Parameters)
     $socket = [Net.WebSockets.ClientWebSocket]::new()
     $cancel = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(15))
     try {
-        $socket.ConnectAsync($socketUri, $cancel.Token).GetAwaiter().GetResult()
+        # Windows/.NET 可能把内部 VoidTaskResult 写入成功流；只返回 CDP result，不能混入异步完成值。
+        $null = $socket.ConnectAsync($socketUri, $cancel.Token).GetAwaiter().GetResult()
         $message = @{ id = 1; method = $Method; params = $Parameters } | ConvertTo-Json -Depth 12 -Compress
         $bytes = [Text.Encoding]::UTF8.GetBytes($message)
-        $socket.SendAsync([ArraySegment[byte]]::new($bytes), [Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
+        $null = $socket.SendAsync([ArraySegment[byte]]::new($bytes), [Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
         do {
             $stream = [IO.MemoryStream]::new()
             try {
