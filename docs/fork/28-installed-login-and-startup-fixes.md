@@ -2,6 +2,14 @@
 
 ## 2026-11-14 系统应用图标更换边界
 
+### DMG 安装窗口背景
+
+3.17.6 最终 Finder 验收发现，DMG 安装窗口仍复用旧版超大 ZCODE 背景。本轮仅替换安装窗口背景为简洁 MiloCode 标题、拖拽说明和向右箭头；不改客户端内部 Logo。逻辑尺寸保持 540×380，MiloCode.app 坐标 130,220、Applications 坐标 410,220 不变。背景不绘制应用图标，避免与 Finder 显示的真实图标重叠。
+
+固定矢量源为 `packages/desktop/build/branding/milocode-dmg-background.svg`，标题及说明转为路径，生成时不依赖系统字体。`node scripts/generate-milocode-dmg-background.mjs` 通过仓库既有 PDF 渲染依赖生成 1x / 2x PNG，`--check` 验证提交资源可重现；`node --test scripts/test/milocode-dmg-background.test.mjs` 验证尺寸、透明度、布局留空与品牌源。此工具不增加应用运行时依赖。
+
+本次发布从已冻结且已验收的 `MiloCode.app` 仅重建 DMG，保留原 ZIP / App / Windows 安装包字节不变。旧背景 DMG 留作废证据；新 DMG 需重新记录摘要、只读挂载验证、真实 Finder 截图后，由发布所有者重新签署计划并上传。禁止重新执行完整 Builder 改写已冻结应用。
+
 按用户最新要求，只将操作系统与安装器显示的 MiloCode 应用图标更换为用户提供的新图，透明区域合成为纯白色背板，再生成 PNG、Windows ICO 与 macOS ICNS 多尺寸资源。沿用 `packages/desktop/build/` 既有打包与运行时引用，不改变应用身份、签名、更新通道或账户状态。
 
 客户端内部 Logo 不变：`packages/ui/src/assets/milo-logo.png`、HTML/React 启动页、欢迎页、标题栏与更新弹窗配图均保留。验收检查生成资源可解码、PNG 背板不透明、ICO/ICNS 多尺寸齐全，确认内部 Logo 与相关源码未改；系统图标通过下一次新安装包生效，不修改当前已安装的应用或原发布包。
