@@ -74,3 +74,16 @@ Windows 实际验收 run `43564372035` 已通过最终 EXE 摘要、可见安装
 Windows run `43566088857` 的五阶段报告均为通过，但实际 `installed-renderer.png` 仍显示「Initializing local data / 0s」。原探针只要求 root 文本和控件数量，启动遮罩本身也满足，导致过早截图并关闭应用。该通过记录不能证明登录页已就绪，也不能仅凭该瞬时画面判断应用卡住。
 
 验收继续使用全新未登录 profile，不增加首页 fallback。除原 document/title/root 条件外，必须同时确认静态 `#loading` 与 React `[data-testid="root-startup-loading"]` 已移除，且真实 `[data-testid="brand-account-submit"]` 登录按钮可见、启用、位于视口内且中心可命中。按钮事实及遮罩状态写入 `renderer-ready` 报告，截图须在该条件满足后取得；探针页面异常或超时仍失败。不修改 App、启动等待逻辑、安装包或签名，本次以相同 EXE 的下一轮 Windows CI 证明登录页可用。
+
+## 登录门禁失败时的只读诊断
+
+Windows run `43566965611` 通过摘要、向导和安装，但严格登录门禁在 120 秒后仍未满足。Host 日志已记录数据库 `ready`（2,334 ms）与 `brandAccount.initialize OK`，末次页面探针却仍报告 React 启动遮罩存在、登录按钮不存在。现有证据不能区分目标页面选择、隐藏 DOM 或 Renderer 启动状态问题；不将其归因于数据库迁移、网络或更新签名，也不据此放宽门槛。
+
+验收脚本继续作为诊断产物的唯一 owner，不向 App 写入启动状态。每次读取 CDP 页面时，保存所有目标的 `id/type/title/url`、当前目标以及末次探针；探针增加 `document.visibilityState`、`document.hasFocus()`、截断至 2,000 字符的 root 可见文字和启动组件的 `data-phase/data-database-phase/data-error-code`、可见性。仅采集隔离未登录 profile 的页面事实，不读取输入值、Cookie、LocalStorage 或凭据。
+
+```text
+末次只读 CDP 探针 → 原严格登录条件仍不满足 → 诊断 JSON + 尝试失败页面截图
+  → 保留原失败原因 → 仅清理本次进程树 → always 上传诊断
+```
+
+超时前将以上事实写入 `renderer-last-probe.json`，并通过末次有效 loopback 页面 socket 尝试保存 `renderer-failed.png`；截图或诊断写入失败只能追加诊断错误，不能掩盖原门禁失败。正常就绪条件、安装与卸载检查、App 和最终安装包字节均不变。

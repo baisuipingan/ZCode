@@ -258,6 +258,10 @@ public static class MiloInstallerWindowProbe {
     $deadline = [DateTime]::UtcNow.AddSeconds(120)
     $ready = $null
     $pageSocket = $null
+    $lastPageSocket = $null
+    $lastRendererTarget = $null
+    $lastRendererProbe = $null
+    $lastPageTargets = @()
     $lastProbeError = ''
     $expression = @'
 (() => {
@@ -287,9 +291,21 @@ public static class MiloInstallerWindowProbe {
     state: document.readyState,
     title: document.title,
     url: location.href,
+    visibilityState: document.visibilityState,
+    hasFocus: document.hasFocus(),
     rootChildren: root?.childElementCount ?? 0,
     textLength: root?.innerText?.trim().length ?? 0,
+    rootText: root?.innerText?.trim().slice(0, 2000) ?? '',
     controls: root?.querySelectorAll('button,input,[role="button"]').length ?? 0,
+    startupStates: Array.from(document.querySelectorAll(
+      '[data-testid="root-startup-loading"],[data-testid="database-startup-silent"],[data-testid="database-startup-status"]'
+    )).map(element => ({
+      testId: element.getAttribute('data-testid'),
+      phase: element.getAttribute('data-phase'),
+      databasePhase: element.getAttribute('data-database-phase'),
+      errorCode: element.getAttribute('data-error-code'),
+      visible: visible(element)
+    })),
     staticLoadingPresent,
     startupLoadingPresent,
     loginSelector: '[data-testid="brand-account-submit"]',
@@ -308,11 +324,16 @@ public static class MiloInstallerWindowProbe {
         Update-OwnedProcesses
         try {
             $pages = @(Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/list" -TimeoutSec 3)
+            $lastPageTargets = @($pages | Select-Object id, type, title, url)
             foreach ($page in $pages) {
                 if ($page.type -ne 'page' -or -not $page.webSocketDebuggerUrl) { continue }
+                $lastPageSocket = $page.webSocketDebuggerUrl
+                $lastRendererTarget = $page | Select-Object id, type, title, url
+                $lastRendererProbe = $null
                 $evaluation = Invoke-Cdp $page.webSocketDebuggerUrl 'Runtime.evaluate' @{ expression = $expression; returnByValue = $true }
                 if ($evaluation.ContainsKey('exceptionDetails')) { throw 'Renderer readiness probe threw an exception.' }
                 $value = $evaluation.result.value
+                $lastRendererProbe = $value
                 if ($value.visibleErrors.Count -gt 0) { throw "Renderer displayed an error: $($value.visibleErrors -join '; ')" }
                 # 启动遮罩也有文本和按钮；全新 profile 必须实际进入可点击的品牌登录页。
                 if ($value.state -eq 'complete' -and $value.title -match 'MiloCode' -and
@@ -332,7 +353,25 @@ public static class MiloInstallerWindowProbe {
         }
         if (-not $ready) { Start-Sleep -Milliseconds 700 }
     }
-    if (-not $ready) { throw "Installed application renderer did not become ready. Last probe: $lastProbeError" }
+    if (-not $ready) {
+        # Host ready 不等于当前页面可用；失败前保留目标、DOM 阶段和截图，不能靠放宽门槛掩盖问题。
+        $diagnostic = [ordered]@{
+            observedAt = [DateTime]::UtcNow.ToString('o')
+            targets = $lastPageTargets; target = $lastRendererTarget; probe = $lastRendererProbe
+            error = $lastProbeError; screenshot = $null; screenshotError = $null
+        }
+        if ($lastPageSocket) {
+            try {
+                $failedShot = Invoke-Cdp $lastPageSocket 'Page.captureScreenshot' @{ format = 'png'; captureBeyondViewport = $false }
+                [IO.File]::WriteAllBytes((Join-Path $evidence 'renderer-failed.png'), [Convert]::FromBase64String($failedShot.data))
+                $diagnostic.screenshot = 'renderer-failed.png'
+            } catch { $diagnostic.screenshotError = $_.Exception.Message }
+        }
+        try {
+            $diagnostic | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $evidence 'renderer-last-probe.json') -Encoding utf8
+        } catch { Write-Warning "Could not save renderer diagnostics: $($_.Exception.Message)" }
+        throw "Installed application renderer did not become ready. Last probe: $lastProbeError"
+    }
     $shot = Invoke-Cdp $pageSocket 'Page.captureScreenshot' @{ format = 'png'; captureBeyondViewport = $false }
     [IO.File]::WriteAllBytes((Join-Path $evidence 'installed-renderer.png'), [Convert]::FromBase64String($shot.data))
     Record-Stage 'renderer-ready' $ready
