@@ -173,8 +173,8 @@ Save-Report
 try {
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1 -or $manifest.repository -ne 'baisuipingan/ZCode' -or
-        $manifest.releaseTag -ne 'milocode-v3.17.4' -or $manifest.version -ne '3.17.4' -or
-        $manifest.assetName -ne 'MiloCode-3.17.4-win-x64.exe') { throw 'Unexpected final release manifest.' }
+        $manifest.releaseTag -ne 'milocode-v3.17.5' -or $manifest.version -ne '3.17.5' -or
+        $manifest.assetName -ne 'MiloCode-3.17.5-win-x64.exe') { throw 'Unexpected final release manifest.' }
     $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
     if ([IO.Path]::GetFileName($InstallerPath) -ne $manifest.assetName) { throw 'Installer filename differs from the final release asset.' }
     $expectedHash = $(if ($Sha256) { $Sha256 } else { $manifest.sha256 }).Trim().ToLowerInvariant()
@@ -182,7 +182,7 @@ try {
     $actualHash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $expectedHash) { throw "Final installer SHA256 mismatch: $actualHash" }
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($InstallerPath)
-    if ($version.ProductVersion -notmatch '^3\.17\.4(?:\.0)?$' -or $version.ProductName -ne 'MiloCode') {
+    if ($version.ProductVersion -notmatch '^3\.17\.5(?:\.0)?$' -or $version.ProductName -ne 'MiloCode') {
         throw "Unexpected installer identity: $($version.ProductName) $($version.ProductVersion)"
     }
     Record-Stage 'asset-verified' @{ sha256 = $actualHash; bytes = (Get-Item -LiteralPath $InstallerPath).Length; version = $version.ProductVersion }
