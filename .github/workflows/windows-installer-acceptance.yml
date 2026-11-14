@@ -2,16 +2,18 @@ name: Windows final installer acceptance
 
 on:
   push:
-    branches: [codex/desktop-managed-agent]
+    branches: [codex/desktop-managed-agent, codex/milocode-computer-use]
     paths:
       - .github/workflows/windows-installer-acceptance.yml
       - scripts/windows-installer-acceptance.ps1
       - scripts/test/windows-installer-cdp.test.ps1
+      - scripts/windows-computer-use-acceptance.mjs
+      - scripts/test/windows-computer-use-acceptance.test.mjs
       - windows-installer-acceptance.json
   workflow_dispatch:
     inputs:
       sha256:
-        description: Final 3.17.6 EXE SHA256 (leave empty to use the tracked manifest)
+        description: Final 3.17.7 EXE SHA256 (leave empty to use the tracked manifest)
         required: false
         type: string
 
@@ -24,7 +26,7 @@ concurrency:
 
 jobs:
   final-installer:
-    if: github.repository == 'baisuipingan/ZCode' && github.ref == 'refs/heads/codex/desktop-managed-agent'
+    if: github.repository == 'baisuipingan/ZCode' && (github.ref == 'refs/heads/codex/desktop-managed-agent' || github.ref == 'refs/heads/codex/milocode-computer-use')
     # GitHub only exposes draft releases to identities with repository push access.
     # This job needs that visibility to test the exact asset before publishing it.
     permissions:
@@ -48,6 +50,9 @@ jobs:
       - name: Verify CDP transport output contract
         run: ./scripts/test/windows-installer-cdp.test.ps1
 
+      - name: Verify Computer Use acceptance transport
+        run: node --test scripts/test/windows-computer-use-acceptance.test.mjs
+
       - name: Download the final Draft Release asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,9 +60,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content windows-installer-acceptance.json -Raw | ConvertFrom-Json
           if ($manifest.repository -ne 'baisuipingan/ZCode' -or
-              $manifest.releaseTag -ne 'milocode-v3.17.6' -or
-              $manifest.assetName -ne 'MiloCode-3.17.6-win-x64.exe') {
-            throw 'The final installer source must remain the fixed 3.17.6 release asset.'
+              $manifest.releaseTag -ne 'milocode-v3.17.7' -or
+              $manifest.assetName -ne 'MiloCode-3.17.7-win-x64.exe') {
+            throw 'The final installer source must remain the fixed 3.17.7 release asset.'
           }
           New-Item -ItemType Directory -Path $env:ACCEPTANCE_ROOT -Force | Out-Null
           gh release download $manifest.releaseTag --repo $manifest.repository --pattern $manifest.assetName --dir $env:ACCEPTANCE_ROOT
@@ -68,7 +73,7 @@ jobs:
           ACCEPTANCE_SHA256: ${{ inputs.sha256 }}
         run: |
           ./scripts/windows-installer-acceptance.ps1 `
-            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.6-win-x64.exe') `
+            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.7-win-x64.exe') `
             -Sha256 $env:ACCEPTANCE_SHA256 `
             -WorkRoot (Join-Path $env:ACCEPTANCE_ROOT 'run')
 
@@ -76,7 +81,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: milocode-3.17.6-windows-final-acceptance-${{ github.run_id }}
+          name: milocode-3.17.7-windows-final-acceptance-${{ github.run_id }}
           path: ${{ env.ACCEPTANCE_ROOT }}/run/evidence/
           if-no-files-found: warn
           retention-days: 14

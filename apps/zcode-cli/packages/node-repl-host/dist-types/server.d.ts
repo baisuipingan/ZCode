@@ -16,7 +16,7 @@ export interface NodeReplExecuteInput {
 }
 export type NodeReplExecutor = (input: NodeReplExecuteInput) => Promise<NodeReplRunResult>;
 export interface NodeReplMcpRuntime {
-    dispose(): void;
+    dispose(): Promise<void>;
     server: Server;
 }
 export declare function setNodeReplMcpProcessTitle(target?: {

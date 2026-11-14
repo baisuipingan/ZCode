@@ -169,12 +169,95 @@ function Test-RendererLoginReady([object]$Value) {
         $Value.loginVisible -and $Value.loginEnabled -and $Value.loginInViewport -and $Value.loginClickable
 }
 
+function Invoke-ComputerUseAcceptance([string]$ApplicationPath) {
+    $fixtureRoot = Join-Path $evidence 'computer-use'
+    New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
+    $fixtureName = 'MiloCodeCuaFixture-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+    $fixtureSource = Join-Path $fixtureRoot ($fixtureName + '.cs')
+    $fixtureExecutable = Join-Path $fixtureRoot ($fixtureName + '.exe')
+    $echoPath = Join-Path $fixtureRoot 'fixture-echo.txt'
+    $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Windows .NET Framework compiler is required for the isolated fixture.' }
+    # 仅本次进程建立的独立窗口可被控制；输入回显与截图不包含用户工作内容。
+    @'
+using System;
+using System.Drawing;
+using System.IO;
+using System.Text;
+using System.Windows.Forms;
+public static class MiloCodeCuaFixture {
+    [STAThread]
+    public static void Main(string[] args) {
+        if (args.Length != 2) throw new ArgumentException("Expected echo path and unique window title");
+        string echoPath = args[0];
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        var window = new Form();
+        window.Text = args[1];
+        window.Width = 650;
+        window.Height = 230;
+        window.StartPosition = FormStartPosition.CenterScreen;
+        window.Font = new Font("Segoe UI", 11);
+        var label = new Label();
+        label.Text = "MiloCode Computer Use acceptance - temporary test window only";
+        label.SetBounds(20, 20, 595, 40);
+        var input = new TextBox();
+        input.Name = "MiloCodeCuaInput";
+        input.AccessibleName = "MiloCode CUA test input";
+        input.SetBounds(20, 85, 595, 35);
+        input.TextChanged += delegate { File.WriteAllText(echoPath, input.Text, new UTF8Encoding(false)); };
+        window.Controls.Add(label);
+        window.Controls.Add(input);
+        File.WriteAllText(echoPath, "", new UTF8Encoding(false));
+        Application.Run(window);
+    }
+}
+'@ | Set-Content -LiteralPath $fixtureSource -Encoding utf8
+    & $compiler '/nologo' '/target:winexe' "/out:$fixtureExecutable" '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' $fixtureSource
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $fixtureExecutable -PathType Leaf)) { throw 'Compiling the isolated Computer Use fixture failed.' }
+    $fixture = Start-OwnedProcess $fixtureExecutable @($echoPath, $fixtureName)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $fixture.Refresh()
+        if ($fixture.HasExited) { throw 'Computer Use fixture exited before showing its window.' }
+        if ($fixture.MainWindowHandle -ne [IntPtr]::Zero -and $fixture.MainWindowTitle -eq $fixtureName) { break }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($fixture.MainWindowHandle -eq [IntPtr]::Zero -or $fixture.MainWindowTitle -ne $fixtureName) { throw 'The isolated Computer Use fixture did not show its window.' }
+    $smokeScript = Join-Path $PSScriptRoot 'windows-computer-use-acceptance.mjs'
+    $smoke = Start-OwnedProcess $ApplicationPath @(
+        $smokeScript, '--application', $ApplicationPath, '--work-root', $fixtureRoot,
+        '--fixture-app', $fixtureName, '--echo-path', $echoPath
+    ) @{ ELECTRON_RUN_AS_NODE = '1' }
+    $null = Wait-OwnedExit $smoke 150
+    $nativeReport = Get-Content -LiteralPath (Join-Path $fixtureRoot 'computer-use-result.json') -Raw | ConvertFrom-Json
+    if ($nativeReport.status -ne 'passed') { throw 'Final-package Computer Use acceptance did not pass.' }
+    $fixture.Refresh()
+    if ($fixture.HasExited -or $fixture.MainWindowTitle -ne $fixtureName) { throw 'Fixture exited before final visual evidence.' }
+    $rect = [MiloInstallerWindowProbe+Rect]::new()
+    if (-not [MiloInstallerWindowProbe]::GetWindowRect($fixture.MainWindowHandle, [ref]$rect)) { throw 'Cannot read fixture window bounds.' }
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    if ($width -lt 200 -or $height -lt 100) { throw 'Computer Use fixture bounds are invalid.' }
+    $bitmap = [Drawing.Bitmap]::new($width, $height)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+        $bitmap.Save((Join-Path $fixtureRoot 'fixture-after.png'), [Drawing.Imaging.ImageFormat]::Png)
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    Record-Stage 'computer-use-verified' @{
+        report = 'computer-use/computer-use-result.json'; fixture = $fixtureName
+        installedNodeReplAndSdk = $true; nativeInputAndIndependentEcho = $true
+    }
+    Stop-OwnedProcesses
+}
+
 Save-Report
 try {
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1 -or $manifest.repository -ne 'baisuipingan/ZCode' -or
-        $manifest.releaseTag -ne 'milocode-v3.17.6' -or $manifest.version -ne '3.17.6' -or
-        $manifest.assetName -ne 'MiloCode-3.17.6-win-x64.exe') { throw 'Unexpected final release manifest.' }
+        $manifest.releaseTag -ne 'milocode-v3.17.7' -or $manifest.version -ne '3.17.7' -or
+        $manifest.assetName -ne 'MiloCode-3.17.7-win-x64.exe') { throw 'Unexpected final release manifest.' }
     $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
     if ([IO.Path]::GetFileName($InstallerPath) -ne $manifest.assetName) { throw 'Installer filename differs from the final release asset.' }
     $expectedHash = $(if ($Sha256) { $Sha256 } else { $manifest.sha256 }).Trim().ToLowerInvariant()
@@ -182,7 +265,7 @@ try {
     $actualHash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $expectedHash) { throw "Final installer SHA256 mismatch: $actualHash" }
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($InstallerPath)
-    if ($version.ProductVersion -notmatch '^3\.17\.6(?:\.0)?$' -or $version.ProductName -ne 'MiloCode') {
+    if ($version.ProductVersion -notmatch '^3\.17\.7(?:\.0)?$' -or $version.ProductName -ne 'MiloCode') {
         throw "Unexpected installer identity: $($version.ProductName) $($version.ProductVersion)"
     }
     Record-Stage 'asset-verified' @{ sha256 = $actualHash; bytes = (Get-Item -LiteralPath $InstallerPath).Length; version = $version.ProductVersion }
@@ -418,6 +501,9 @@ public static class MiloInstallerWindowProbe {
         ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $evidence 'renderer-ready-probe.json') -Encoding utf8
     Record-Stage 'renderer-ready' $ready
     Stop-OwnedProcesses
+
+    # 真实桌面控制必须在同一最终安装目录验证；任何 CUA 失败都会阻止发布。
+    Invoke-ComputerUseAcceptance $appPath
 
     $uninstaller = Start-OwnedProcess -FilePath $uninstallers[0].FullName -Arguments @() -RawArguments "/S /currentuser _?=$installDir"
     $uninstallExit = Wait-OwnedExit $uninstaller 120
