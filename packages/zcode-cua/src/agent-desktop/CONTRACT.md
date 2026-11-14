@@ -20,6 +20,13 @@ port rejects immediately, without queuing; process death automatically releases 
 Only the current call owns and releases the listener. Tests can inject a private lock port via
 the trusted host environment without changing the desktop action contract.
 
+On Windows, the runtime selects an absent random state-root leaf and leaves its creation and
+protected DACL to the pinned native provider. Precreating it with Node's POSIX mode would leave
+inherited Windows ACEs that the provider correctly refuses. macOS retains the 0700 directory
+creation before startup. Permission queries do not precreate a state root or create a native session.
+The runtime owns cleanup after initialization has settled; native ownership and ACL validation
+remain mandatory and are never weakened by the host.
+
 Cancellation, stop, closeSession, and dispose terminate controlled process trees, discard refs,
 and remove the private native session directory. Transport errors after submission report
 `possibly_sent` and never retry an action. Initialization, command execution, transport output,

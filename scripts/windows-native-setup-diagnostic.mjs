@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { nativeEnvironment } from "../packages/zcode-cua/src/agent-desktop/process.js";
 
@@ -60,7 +60,8 @@ export async function runNativeSetupDiagnostic({ binary, directory, env = proces
   };
   // session start 不读取桌面；仅此受控命令允许保留 stderr，不能扩大到普通原生调用。
   // 使用产品现有 nativeEnvironment，避免诊断另造一套环境后得出错误结论。
-  await mkdir(state, { recursive: false });
+  // Windows 上 mkdir(mode:0700) 不会收紧继承的 DACL。叶目录必须由原生
+  // session start 首次创建并保护，诊断不能预建它而重新制造同一故障。
   try {
     for (const args of [["--version"], ["session", "start", "--no-trace", "--name", "MiloCode"]]) {
       report.commands.push(await runCommand(binary, args, filtered, directory));

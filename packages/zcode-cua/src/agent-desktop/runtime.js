@@ -3,7 +3,7 @@ import { access, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import {
   DesktopRuntimeError,
@@ -483,7 +483,12 @@ export function createAgentDesktopRuntime(options = {}) {
       state.binary = await binaryFor(env);
       if (joinedSignal.aborted)
         throw runtimeError("cancelled", "Desktop control was stopped.");
-      await mkdir(state.root, { recursive: true, mode: 0o700 });
+      // Windows 忽略 mkdir 的 POSIX mode，提前创建叶目录会留下继承 ACE，
+      // 被上游现存目录校验拒绝；只准备父目录，让原生程序创建并保护叶目录 DACL。
+      await mkdir(process.platform === "win32" ? dirname(state.root) : state.root, {
+        recursive: true,
+        mode: 0o700,
+      });
       state.env = nativeEnvironment(env, state.root);
       const result = await runNativeCommand(
         state.binary,

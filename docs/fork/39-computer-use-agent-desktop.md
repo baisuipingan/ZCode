@@ -45,6 +45,23 @@ sequenceDiagram
 - 原闭源 producer 标记继续保持占位，避免误启其 Helper 构建；新增独立 agent-desktop provider 元数据与资源检测。
 - 原生资源固定版本、平台、架构和 SHA-256，构建时准备并验证，运行时不联网安装、不搜索 PATH。打包保留同目录伴随资源与许可证。Mac ARM64 / Windows x64 是本次验收目标，其他架构缺资源时明确不可用。
 
+### 原生状态目录创建与 Windows ACL
+
+Runtime 只选定随机隔离的 `AGENT_DESKTOP_HOME` 路径并拥有其清理生命周期。macOS 保留初始化前以 `0700` 创建该目录。Windows 必须把尚不存在的随机叶目录交给固定原生程序在 `session start` 中创建并保护 DACL，不能由 Node 提前创建叶目录：Windows 不将 `mkdir` 的 POSIX mode 转成私有 ACL，已有目录会继承父目录的 ACE；上游只为自己新建的叶目录设置受保护 DACL，对已有目录严格校验且拒绝不受信任主体。
+
+这是宿主与原生程序之间的目录创建顺序修复，不改上游校验、不主动放宽 ACL、不提高权限、不更换目录来绕过原始失败。父路径与既有目录仍由上游验证重解析点、owner 和私有 ACL；最终随机叶目录的 ACL 只有原生程序创建。初始化完成或失败后的清理仍归同一 Runtime，停止时先等待创建结束再删除，防止迟到的创建留下残留。只读权限查询不预建状态目录、不创建原生 session。
+
+```mermaid
+sequenceDiagram
+  participant R as Runtime
+  participant N as Windows 原生程序
+  R->>R: 选择不存在的随机状态叶路径
+  R->>N: AGENT_DESKTOP_HOME + session start
+  N->>N: 校验祖先、创建叶目录、设置并校验受保护 DACL
+  N-->>R: session_id 或明确失败
+  R->>R: 生命周期结束后清理同一随机目录
+```
+
 ## 验收
 
 1. CUA/工程回归覆盖工具白名单、schema错误、工作区会话隔离、subagent/remote拒绝、冲突锁、取消/停止、进程退出、资源hash/布局和SDK桥接；不新增已退役的 App 业务单测。
@@ -52,6 +69,7 @@ sequenceDiagram
 3. Windows 检查固定资产、打包路径和适配契约；如无 Windows 实机则明确未完成动态验收，不把Mac结果当Windows结果。
 4. 必须通过 `pnpm typecheck`、`pnpm lint` 和 `pnpm architecture:check --changed`，记录真实结果。
 5. 不修改现有会话、账户数据、钥匙串、更新密钥、应用内部 Logo 或已发布 3.17.6 下载资产。
+6. CUA 协议 fixture 分别断言 Windows `session start` 前状态叶目录不存在、由原生 fixture 创建，macOS 已有目录保持 `0700`；权限查询仍无预创建。Windows 最终安装包再以真实原生程序验证 DACL 和完整 Computer Use 链，fixture 不能替代 Windows 动态验收。
 
 ## 实际验证记录（2026-11-14）
 
@@ -62,3 +80,4 @@ sequenceDiagram
 - Mac 原生权限读取通过：Accessibility 为 denied、Screen Recording 为 granted。仅对不存在的独立测试应用执行定向观察，返回真实 `PERM_DENIED` 与 `not_sent`；未回退到用户桌面。尚未完成 snapshot → 语义输入 → 再观察的成功路径，需用户先授予辅助功能权限。证据位于本地 `output/cua-integration-audit/native-smoke.json`。
 - Mac ARM64 与 Windows x64 固定发行资产均完成 SHA-256、许可证、同目录 sidecar 和模拟包内布局检查。未进行完整安装包构建、Mac 最终签名包冷启动或 Windows 实机键鼠操作验收。
 - 本次退出后无残留 agent-desktop 进程；临时原生 session 目录已清理。正式客户端仍为 3.17.6，本分支代码尚未发包。
+- 后续 Windows 最终包动态验收定位到状态叶目录被 Node 提前创建、继承 DACL 被原生程序拒绝。目录创建顺序回归先在旧实现上明确失败（`homeExisted: true`），修复后 CUA 包 15/15 通过，定向 lint 0 warnings / 0 errors、CUA 类型检查及架构检查通过；只读权限查询无预建目录的回归也通过。这些 fixture 结果不代替修复后重新构建安装包的 Windows 原生动态验收。

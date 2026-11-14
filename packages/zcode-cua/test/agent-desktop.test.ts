@@ -36,9 +36,10 @@ import readline from 'node:readline';
 import {randomUUID} from 'node:crypto';
 const home=process.env.AGENT_DESKTOP_HOME;
 const args=process.argv.slice(2);
+const homeExisted=fs.existsSync(home);
 fs.mkdirSync(home,{recursive:true});
 const log=(x)=>fs.appendFileSync(path.join(home,'calls.jsonl'),JSON.stringify(x)+'\n');
-log({event:'spawn',args,pid:process.pid});
+log({event:'spawn',args,pid:process.pid,homeExisted,homeMode:fs.statSync(home).mode&0o777});
 if(args[0]==='session'){
  const id='run-'+randomUUID();
  fs.mkdirSync(path.join(home,'sessions',id),{recursive:true});
@@ -193,6 +194,46 @@ describe.skipIf(process.platform !== "darwin")(
         ).toMatchObject({ isError: true });
       }
       expect(await homes()).toEqual([]);
+    });
+
+    it("leaves the Windows state-root leaf absent so the native provider can protect its ACL", async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      try {
+        const value = runtime();
+        expect(await call(value, "desktop_snapshot")).toMatchObject({
+          structuredContent: { ok: true },
+        });
+        const logs = (
+          await readFile(join((await homes())[0], "calls.jsonl"), "utf8")
+        )
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+        // 模拟的是上游目录创建合同；真实 Windows DACL 由最终安装包 runner 验证。
+        expect(
+          logs.find((item) => item.event === "spawn" && item.args[0] === "session"),
+        ).toMatchObject({ homeExisted: false });
+        await value.closeSession(context);
+        expect(await homes()).toEqual([]);
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+      }
+    });
+
+    it("keeps the macOS state-root private before native session initialization", async () => {
+      expect(await call(runtime(), "desktop_snapshot")).toMatchObject({
+        structuredContent: { ok: true },
+      });
+      const logs = (
+        await readFile(join((await homes())[0], "calls.jsonl"), "utf8")
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(
+        logs.find((item) => item.event === "spawn" && item.args[0] === "session"),
+      ).toMatchObject({ homeExisted: true, homeMode: 0o700 });
     });
 
     it("returns real filtered schemas and rejects hidden tools and dangerous arguments", async () => {
@@ -397,7 +438,10 @@ describe.skipIf(process.platform !== "darwin")(
       ).toEqual([
         { name: "desktop_permissions", arguments: { request: false } },
       ]);
-      expect(log.find((item) => item.event === "spawn").args).toEqual(["mcp"]);
+      expect(log.find((item) => item.event === "spawn")).toMatchObject({
+        args: ["mcp"],
+        homeExisted: false,
+      });
     });
 
     it("retains delivery uncertainty for malformed native results and text-only errors", async () => {

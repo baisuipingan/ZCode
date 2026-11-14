@@ -34,3 +34,11 @@ flowchart LR
 当最终安装版 Node REPL 已握手、但原生 `session start` 失败时，验收仍必须失败，不替换执行器、不换输入路径、不重放桌面操作。验收 harness 可在失败后执行一次独立的受控诊断：使用同一安装目录内的最终原生 binary 和 `nativeEnvironment` 过滤规则，在独立临时 state 目录执行 `--version` 与 `session start --no-trace --name MiloCode`。这两个命令均不读取桌面、不输入、不截图，允许保存受控的 stdout/stderr、退出码及非敏感的 SystemRoot/临时目录是否存在等事实；不得保存完整环境、令牌或任意用户窗口数据。
 
 诊断结果只帮助区分命令参数、二进制依赖和状态目录权限问题，不作为 Computer Use 通过证据。诊断创建的 state 由 harness 单独持有，在有界子进程退出后删除。原始失败、MCP/SDK 阶段、原生诊断三者分开保留，避免把未确认假设写成根因。
+
+### 已确认的 Windows 状态目录初始化问题
+
+首轮最终包在 Windows runner 中 `--version` 成功，`session start --no-trace --name MiloCode` 返回 `INTERNAL: private file DACL grants an untrusted principal`。固定 upstream commit 的 session/tree.rs 首先确保状态根私有；Windows private_file/path.rs 只在叶目录由原生程序新建时保护 DACL，对已有叶目录仅校验。Runtime 的 Node `mkdir(..., mode: 0700)` 提前创建了该叶目录，Windows 忽略 POSIX mode、保留继承 ACE，因而与上游私有目录合同冲突。这不是启动参数错误或已证实的二进制依赖缺失，也不能把失败归为 runner 本身。
+
+按 39 号规格修复产品与诊断的创建顺序：Windows runtime/harness 只准备父目录并选定随机的、调用前不存在的 `AGENT_DESKTOP_HOME` 叶路径，由同一固定 provider 创建并设置 ACL；macOS runtime 保持原有 `0700` 创建行为。诊断不能提前 mkdir/chmod 状态叶目录，不能放宽 DACL 校验或修改测试结果来通过。原始失败证据保留；修复后必须提交新的业务源码、真实重构建 CLI 与双平台最终包，再重新冻结摘要和运行平台验收，原首轮候选的 hash 不能沿用于新包。
+
+修复候选单独放在 `packages/desktop/dist-milo-3.17.7-20261114-aclfix/`，本轮记录放在 `output/3.17.7-aclfix-audit/`；首轮未发布候选及失败证据保留。Mac 免费临时签名的代码身份随最终构建变化，系统记录的旧版授权不能作为新包已授权的证据，必须按最终包实际权限复测。

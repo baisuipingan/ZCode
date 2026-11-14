@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runNativeSetupDiagnostic } from "../windows-native-setup-diagnostic.mjs";
 
-test("failure diagnostics use the filtered native environment, preserve the exact failure, and clean their own state", async () => {
+test("failure diagnostics leave native state creation to the CLI, filter the environment, and retain the exact failure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "milocode-native-diagnostic-"));
   try {
     // Node 充当无桌面访问的 CLI fixture；session 是被实际子进程执行的脚本。
@@ -14,6 +14,8 @@ test("failure diagnostics use the filtered native environment, preserve the exac
       `const fs = require("node:fs");
 if (process.argv.slice(2).join(" ") !== "start --no-trace --name MiloCode") process.exit(91);
 if (process.env.GH_TOKEN || process.env.DIAGNOSTIC_SECRET || !process.env.AGENT_DESKTOP_HOME) process.exit(92);
+if (fs.existsSync(process.env.AGENT_DESKTOP_HOME)) process.exit(93);
+fs.mkdirSync(process.env.AGENT_DESKTOP_HOME);
 fs.writeFileSync(require("node:path").join(process.env.AGENT_DESKTOP_HOME,"owned-state"),"fixture");
 process.stdout.write(JSON.stringify({ok:false,error:{code:"CONTROLLED_FAILURE"}}));
 process.stderr.write("controlled setup failure");
