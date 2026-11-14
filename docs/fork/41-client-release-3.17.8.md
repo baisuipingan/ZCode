@@ -1,6 +1,6 @@
 # MiloCode 3.17.8：当前应用授权引导发布
 
-状态：准备构建与验收；用户于 2026-11-15 授权发布。实现规格见 [39](39-computer-use-agent-desktop.md)“当前应用授权引导与更新提醒”。仅更新客户端，不需要部署 Sub2API。
+状态：MiloCode 3.17.8 Windows x64 与 Mac ARM64 已于 2026-11-15 正式发布。实现规格见 [39](39-computer-use-agent-desktop.md)“当前应用授权引导与更新提醒”。仅更新客户端，没有部署 Sub2API。
 
 ## 发布范围与来源
 
@@ -30,3 +30,24 @@ flowchart LR
 - 验收只读取冻结候选，不重写包。沿用 Windows `milocode-win-2026-r2` 与 Mac `milocode-updates`，不轮换密钥或变更官网存储设置。
 - 沿用现有发布 CLI 和管理员签发上传链路。先 prepare / dry-run / 固定公钥独立核验，再上传不可变包，最后更新每平台 feed。保留 3.17.7 及之前发行对象。发布后核对公开 HEAD / Range / feed 签名及官网 `/api/v1/desktop/downloads` 两平台版本和链接。
 - 磁盘空间有限，只按已确认清单清理可重建临时目录；保留最终包、证据、密钥、真实用户数据和运行中 App。
+
+## 最终验收与发布结果
+
+- 正式业务源码固定为 `2ff9f0e6d4782c63e84bde8f208e36b3af910ce1`。验收合同提交为 `77c72d46ff46205147514c54cf3f7e8900f9579e`，Windows workflow [run 43615153543](https://github.com/baisuipingan/ZCode/actions/runs/43615153543) 通过，验收的是与下面摘要一致的最终安装包。
+- 全仓 `pnpm typecheck` 通过；lint 为 0 errors、84 条既有 warnings；`architecture:check --changed` 为 0 violations；`git diff --check` 通过。受影响工程测试选择器选中 158 项后按仓库规则跳过，不记作 158 项测试通过。
+- Windows 静态包验收通过；runner 实际安装、登录页、41 个 Computer Use 工具发现、独立测试窗口中文与 emoji 输入/回显、停止清理及卸载通过。截图经人工视觉检查，runner 清理无错误。
+- Mac 静态验收 27/27、最终候选隔离冷启动及 IPC 通过：当前 App 版本/realpath/签名身份匹配；定位和两个权限入口只指向当前 App；登录 PKCE 发起/取消和真实 `safeStorage` 合成数据加解密通过，`pageErrors=[]`。没有读取用户 token、调用付费模型、修改 TCC 或声明已授予系统权限。
+- CUA 源 UI 浏览器专项 22/22 通过。相同浏览器批次另外 37 项通过、1 项无关既有用例失败：provider model editor 对像素宽度使用严格相等，实际为约 `15.9869`、期望 `16`（`provider-model-editor-progressive-cases.mjs:145`）；该失败与本次权限引导无关，未改断言或将其写作通过。
+- Mac 仍是免费 ad-hoc 签名、未公证。代码封印验证通过，Gatekeeper 拒绝结果已单独记录；新包首次运行的系统授权仍由用户手动完成。本次没有用授权引导冒充系统已批准。
+- 独立离线计划核验确认冻结文件摘要与签名计划一致，Windows 更新清单及 Mac Sparkle feed/ZIP 签名通过固定原公钥验证。GitHub 四个 Draft assets 的 size/SHA256 与冻结包完全匹配。
+- 两平台不可变对象先上传并通过发布器完整公网 GET/SHA512，再分别更新 stable feed。独立公网核验确认六对象 HEAD/MIME/cache/Range 正确，四个安装包首/中/尾采样字节均匹配本地冻结包；两个更新 feed 签名有效。生产 `GET /api/v1/desktop/downloads` 返回 Windows `3.17.8` EXE（199559833 bytes）及 Mac `3.17.8` DMG（238115772 bytes），均指向预期 R2 地址。
+- GitHub [milocode-v3.17.8](https://github.com/baisuipingan/ZCode/releases/tag/milocode-v3.17.8) 已公开，四个 assets 摘要如下：
+
+| 最终文件 | 字节 | SHA256 |
+| --- | ---: | --- |
+| Windows x64 EXE | 199559833 | `9e067ba0e6d936e08122470cc75ffd5897235004fe312e1ef181f119db917880` |
+| Windows blockmap | 210625 | `ec8f75024fb13c50f36a626e18f81986a32d47b51e69ebefedeb6c96e956961f` |
+| Mac ARM64 ZIP | 230373080 | `dd97abc04cfcd2830d9c78a2abe4e27ac8da22b74556ce101cfd382135a90b9f` |
+| Mac ARM64 DMG | 238115772 | `aa721a0820223b697bf27a9e9350c36146c4aa1e7207a926dd514587ee041792` |
+
+- 官网 `/downloads` 通过既有 API/feed 自动显示 3.17.8；无需再次部署 Sub2API。Windows 和 Mac 均沿用原更新密钥，未轮换；3.17.7 及更早版本对象保留。
