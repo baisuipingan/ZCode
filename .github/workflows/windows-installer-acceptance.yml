@@ -29,13 +29,16 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    env:
-      ACCEPTANCE_ROOT: ${{ runner.temp }}\milocode-windows-acceptance
     steps:
       - name: Check out acceptance scripts
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Prepare an isolated acceptance directory
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'milocode-windows-acceptance'
+          "ACCEPTANCE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Download the final Draft Release asset
         env:
