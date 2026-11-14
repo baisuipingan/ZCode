@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runNativeSetupDiagnostic } from "./windows-native-setup-diagnostic.mjs";
 
 const OUTPUT_LIMIT = 32 * 1024 * 1024;
 const RESULT_MARKER = "MILOCODE_CUA_ACCEPTANCE_JSON:";
@@ -362,6 +363,16 @@ export async function runWindowsComputerUseAcceptance(argv = process.argv.slice(
     report.status = "failed";
     report.error = error instanceof Error ? error.message : String(error);
     report.errorStack = error instanceof Error ? error.stack : undefined;
+    // setup 失败时只诊断不读桌面的版本/session 命令，原始验收继续失败。
+    if (report.error.includes("Native session setup failed.")) {
+      try {
+        await runNativeSetupDiagnostic({ binary, directory: workRoot });
+        report.nativeSetupDiagnostic = "native-setup-diagnostic.json";
+      } catch (diagnosticError) {
+        report.nativeSetupDiagnosticError =
+          diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError);
+      }
+    }
     throw error;
   } finally {
     if (!stopped && !client.closed) {

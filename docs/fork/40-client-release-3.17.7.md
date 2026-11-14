@@ -28,3 +28,9 @@ flowchart LR
 ```
 
 源码 HEAD 是构建来源事实；验收只读取最终候选，不重写包。发布 CLI 是正式对象与 feed 写入的唯一入口，安装包内容不经过 Sub2API 下载代理。
+
+## Windows 原生初始化失败诊断
+
+当最终安装版 Node REPL 已握手、但原生 `session start` 失败时，验收仍必须失败，不替换执行器、不换输入路径、不重放桌面操作。验收 harness 可在失败后执行一次独立的受控诊断：使用同一安装目录内的最终原生 binary 和 `nativeEnvironment` 过滤规则，在独立临时 state 目录执行 `--version` 与 `session start --no-trace --name MiloCode`。这两个命令均不读取桌面、不输入、不截图，允许保存受控的 stdout/stderr、退出码及非敏感的 SystemRoot/临时目录是否存在等事实；不得保存完整环境、令牌或任意用户窗口数据。
+
+诊断结果只帮助区分命令参数、二进制依赖和状态目录权限问题，不作为 Computer Use 通过证据。诊断创建的 state 由 harness 单独持有，在有界子进程退出后删除。原始失败、MCP/SDK 阶段、原生诊断三者分开保留，避免把未确认假设写成根因。

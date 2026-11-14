@@ -8,7 +8,9 @@ on:
       - scripts/windows-installer-acceptance.ps1
       - scripts/test/windows-installer-cdp.test.ps1
       - scripts/windows-computer-use-acceptance.mjs
+      - scripts/windows-native-setup-diagnostic.mjs
       - scripts/test/windows-computer-use-acceptance.test.mjs
+      - scripts/test/windows-native-setup-diagnostic.test.mjs
       - windows-installer-acceptance.json
   workflow_dispatch:
     inputs:
@@ -51,7 +53,7 @@ jobs:
         run: ./scripts/test/windows-installer-cdp.test.ps1
 
       - name: Verify Computer Use acceptance transport
-        run: node --test scripts/test/windows-computer-use-acceptance.test.mjs
+        run: node --test scripts/test/windows-computer-use-acceptance.test.mjs scripts/test/windows-native-setup-diagnostic.test.mjs
 
       - name: Download the final Draft Release asset
         env:
