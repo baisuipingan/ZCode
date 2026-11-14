@@ -1,6 +1,6 @@
 # MiloCode 3.17.4 发布规格与记录
 
-状态：2026-11-14 发布准备，尚未构建、上传或切换正式 stable。本次由用户授权发布最新 Windows x64 与 macOS ARM64 客户端；不得覆盖已发布的 3.17.3 资源。
+状态：2026-11-14，Windows x64 与 macOS ARM64 均已构建、验收并发布正式 stable，GitHub Release 已公开，生产下载页两平台均为 `3.17.4`。本次由用户授权发布最新客户端，保留已发布的 3.17.3 资源。
 
 ## 发布范围与唯一事实源
 
@@ -50,7 +50,7 @@
 - 构建私有默认配置包含现有更新根、Windows 公钥及 Sparkle 公钥；当前进程无 NSIS 外部覆盖。
 - 当前可用磁盘约 9 GiB，需顺序构建并及时清理本轮可再生 unpacked 验收副本；保留正式包、摘要和验收证据，不删除用户应用、卷或历史正式资源。
 
-后续回填真实 source HEAD、产物摘要、运行证据和是否正式发布，不将准备完成写成发布成功。
+最终 source HEAD、产物摘要、运行证据和正式发布结果见下文；准备阶段证据本身不代表发布完成。
 
 ## Windows 发布身份恢复
 
@@ -77,3 +77,33 @@
 2026-11-14 身份准备已完成：新目录及私钥权限分别为 `0700` / `0600`；Keychain 受保护副本写入后实际读回，仅在内存比较，结果一致。构建配置仅修改 Windows 公钥，Sparkle 公钥和所有其他默认配置逐项保持不变；新包信任表仅包含 `milocode-win-2026-r2`。新公钥 SPKI DER SHA256 为 `998ee4347085aa9e4ad109c2c99d6b76386be0f816b60c71d8244f8a053792f9`；旧公钥指纹为 `bb6d6f9d22a9db2d1c14f2ea1c8e740716000e80af49c9583d63956b04653164`，仅保留作旧身份审计说明。
 
 新 Windows 候选的静态验收必须精确断言新 key ID、单 key 信任集合及上述新指纹，不得通过删除原来的公钥断言来放宽校验。旧候选的 runner 结果也不能证明新候选字节可运行；新 EXE 必须重新冻结 SHA256、替换未公开 Draft 资产并执行同摘要运行验收，均由集成任务统一操作。密钥准备证据位于被 Git 忽略的 `output/3.17.4-release-audit/key-rotation/`，不得把私钥或其内容提交进仓库。
+
+## 最终产物与 macOS 发布结果
+
+| 产物 | Bytes | SHA256 | 业务源码 metadata |
+| --- | ---: | --- | --- |
+| Windows x64 EXE | 198,159,894 | `b390e54a463010f60cca7b31f7290a4c74848dfada50f6807ca992b71b6e751a` | `0c63e1c3` |
+| macOS ARM64 ZIP | 228,065,794 | `c693ff351ee6026ab33ca5726abb299caf02950646501bc5235109363ee20ca6` | `58a6c539` |
+| macOS ARM64 DMG | 235,820,120 | `bdb72b99b99145af0d8c497e12fc317ebfe23a034307fde8a097dd4e1175269f` | `58a6c539` |
+
+后续提交只涉及 Windows 验收脚本和发布记录，不把这些提交冒充 App 编译来源。Windows 最终候选位于 `packages/desktop/dist-milo-3.17.4-20261114-rekey/win-x64/`；Mac ZIP/DMG 位于 `packages/desktop/dist-milo-3.17.4-20261114/mac-arm64/`。
+
+Mac 最终包 19 项静态检查通过；隔离冷启动、浏览器登录发起、取消并重新登录、PKCE 回调均通过，未发起付费模型调用。沿用原 Sparkle 身份签署 ZIP 与 appcast，独立公钥验证通过；正式发布工具完成公网 HEAD、Range 和完整包摘要检查后，才推进 `stable/darwin-arm64/appcast.xml`。公开 appcast 为 1,842 bytes，SHA256 `e6a77067fe287a31e21901a02938cd75215bbf10ccc94a038b161fd8fc90310d`，与独立验签的清单一致。生产下载 API 和页面均已显示 Mac `3.17.4`。
+
+额外尝试 Mac 原生「检查更新」时观察到 `idle → checking → idle`，没有取得原生提示框文字；未执行完整原位升级，不将此次观察写成完整升级验收通过。网站主下载入口仍使用 ZIP，DMG 同步提供；没有改为 Apple Developer ID 签名或公证。
+
+发布计划及签名验证见 `output/milocode-release/3.17.4-mac/`、`output/milocode-release/3.17.4-windows-r2/`，本轮构建及运行证据见 `output/3.17.4-release-audit/`。已清除本轮可再生的 Windows unpacked、Mac unpacked 和隔离测试应用；保留正式包、签名清单、摘要和失败/成功证据。
+
+Windows 最终 [CI 43568670282](https://github.com/baisuipingan/ZCode/actions/runs/43568670282) 对上述相同 SHA256 的正式 EXE 全部通过：真实安装向导、安装退出 0、全新 profile 进入可点击登录页、卸载退出 0，以及本次文件和快捷方式清理。人工截图与截图前后两次严格 DOM 检查一致；没有关闭安全策略或绕过 App 门禁，没有执行付费调用。此前探针读取旧 DOM、截图却已为登录页的矛盾由验收取样顺序修正并重新核对，未因此修改 App 或重编包。完整过程见 [34 号规格](34-windows-installer-toolchain-repair.md)。
+
+## 正式发布与生产验收
+
+Windows 使用同一份已独立验签的发布计划正式上传。首次在公网 HEAD 阶段遇到网络失败，工具中止，stable 保持原版；确认已上传 EXE 和 blockmap 的公网长度正确后重跑相同计划，完整公网 HEAD、Range、SHA512 校验全部通过，最后才推进 Windows stable。未重新生成密钥、改变包字节、覆盖旧版本或绕过检查。
+
+公开 `stable/win32-x64/latest.json` 为 1,587 bytes，SHA256 `56d6eb15b8f348f19be0a2cc85adea23f3ccef9c22219285b1f25acfea759b9e`，key ID 为 `milocode-win-2026-r2`，与本地独立验签的清单逐字节一致。生产 `/api/v1/desktop/downloads` 的 Windows x64 与 Mac ARM64 均为 `available=true / version=3.17.4`，包大小和直连地址正确；实际浏览器下载页同时显示两个 `v3.17.4`，不依赖再次部署网站。
+
+[GitHub Release milocode-v3.17.4](https://github.com/baisuipingan/ZCode/releases/tag/milocode-v3.17.4) 已公开，四份资产的摘要与上表及 Windows blockmap `b0743b42626dd447bd82f3cbad6c6a3c626e0bbb5a30d9b180c901b0dd41cd48` 一致。Release notes 已明确说明 Windows 旧版需要手动安装一次 3.17.4，再继续使用应用内更新；没有声称旧密钥可自动信任新密钥。
+
+对应 Sub2API 生产版本为 `0.2.21-ds.18`（`fork-v0.2.21-18`），镜像 `sha256:6ca949e5fc02263f011e4cd7f1b6072fcabde916a82a2639036691cc79dc1cdc`。部署、健康检查和远程官方档案验收已完成；远程档案 revision `2026-11-14.2`、37 项、未使用 fallback。客户端本次发包只推进下载存储与 feed，不重部署纯发布文档。
+
+正式证据包括 `windows-publish-retry.log`、`windows-published-feed-result.json`、`production-downloads-result.json`、`github-release-result.json` 和 `production-ui/downloads-both-3.17.4.png`，均位于 `output/3.17.4-release-audit/`。这些文件不包含发布私钥、管理员凭据或存储密钥。
