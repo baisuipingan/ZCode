@@ -160,6 +160,7 @@ import {
   updateZCodeStdioTapDevMenuState,
 } from "./desktopApplicationMenu.js";
 import { applyAppIcon } from "./desktopWindowChrome.js";
+import { resolveDesktopAppIconPath } from "./desktopWindowChromeState.js";
 import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
@@ -329,14 +330,12 @@ process.on("unhandledRejection", (reason) => {
   logger.error("unhandledRejection:", reason);
 });
 
-const iconPath =
-  process.platform === "win32"
-    ? app.isPackaged
-      ? join(process.resourcesPath, "icon_windows.png")
-      : join(import.meta.dirname, "../../build/icon_windows.png")
-    : app.isPackaged
-      ? join(process.resourcesPath, "icon.png")
-      : join(import.meta.dirname, "../../build/icon.png");
+const iconPath = resolveDesktopAppIconPath({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  mainDirectory: import.meta.dirname,
+});
 const linuxDesktopIntegrationIconPath =
   process.platform === "linux"
     ? app.isPackaged

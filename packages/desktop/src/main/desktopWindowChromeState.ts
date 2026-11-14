@@ -1,7 +1,27 @@
 import { release as readPlatformRelease } from "node:os";
+import { join } from "node:path";
 import type { DesktopWindowChromeState } from "@zcode/shared";
 
 const WINDOWS_11_FIRST_BUILD = 22000;
+
+export function resolveDesktopAppIconPath(options: {
+  platform: NodeJS.Platform;
+  isPackaged: boolean;
+  resourcesPath: string;
+  mainDirectory: string;
+}): string {
+  // Mac 满画布白底图会占满 Dock；平台专用资源已在构建时留边，所有系统入口必须读取同一份。
+  // 只解析路径，不在运行时重新缩放，也不改变 Linux 和客户端内部 Logo 使用的通用资源。
+  const filename =
+    options.platform === "darwin"
+      ? "icon_mac.png"
+      : options.platform === "win32"
+        ? "icon_windows.png"
+        : "icon.png";
+  return options.isPackaged
+    ? join(options.resourcesPath, filename)
+    : join(options.mainDirectory, "../../build", filename);
+}
 
 export function resolveMacOSMajorVersion(
   platform: NodeJS.Platform,

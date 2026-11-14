@@ -6,6 +6,22 @@
 
 客户端内部 Logo 不变：`packages/ui/src/assets/milo-logo.png`、HTML/React 启动页、欢迎页、标题栏与更新弹窗配图均保留。验收检查生成资源可解码、PNG 背板不透明、ICO/ICNS 多尺寸齐全，确认内部 Logo 与相关源码未改；系统图标通过下一次新安装包生效，不修改当前已安装的应用或原发布包。
 
+### 后续：Mac / Windows 系统图标视觉尺寸修正
+
+3.17.5 用户截图显示 Dock 图标为满画布白色方块，比同排其他应用显得更大。已确认原生成过程把整个 PNG 和 ICNS 每一帧都写成不透明 RGB；Mac 启动后还会通过 `app.dock.setIcon()` 原样使用该 PNG。问题来自资源形状，不是 Dock 大小设置或缓存。
+
+保持原 Milo 字标、颜色、白色背板与现有应用身份。Mac 使用专用 `icon_mac.png` 及对应 ICNS：1024 画布中白色圆角背板宽 824（约 80.5%），外围透明；这是本项目参照同屏应用的视觉参数，不声称为 Apple 强制像素值。Windows 独立资源使用更紧凑的白色圆角背板，宽约为画布的 87.5%，逐尺寸检查 16/20/24/32/40/48/64/128/256；小帧保持 32bpp alpha 和正确 AND 透明掩码。两平台均仅外围透明，白色背板内部不透明。
+
+现有 `build/icon.png`、Linux `build/icons/`、客户端内部 Logo/启动页/更新配图和 Sub2API 图标不随本轮改变。平台系统图标路径由 Main 单一解析入口提供给 Dock、窗口/About 与 Mac 权限拖拽；Mac 打包复制专用 PNG，Windows 沿用 `icon_windows.png`、应用 ICO 和安装器 ICO，Mac 应用和 DMG 沿用现有 ICNS 路径。不得在运行时二次缩放图标，也不得只修静态 ICNS 而让启动 PNG 覆盖回旧外观。
+
+实现前保留可复跑的资源验收：生成前后预览、深浅背景上的实际显示尺寸、ICNS 每帧 RGBA/边距、ICO 每个 PNG/DIB 帧的 alpha/AND mask、平台路径与打包引用一致，并检查内部资源摘要保持不变。更新图标的生成与封装应可从仓库中的固定源素材重现，不依赖个人绝对路径。本轮先落地修复与验证；既有发布安装包保持不变，后续需递增版本发包才会对已安装用户生效。
+
+原始字标存于 `packages/desktop/build/branding/milo-wordmark.png`，保留用户素材原字形；平台画布和封装由 `scripts/generate-milocode-app-icons.mjs` 生成。执行 `pnpm icons:milocode` 重建，`pnpm icons:milocode --check` 检查提交资源能否原样重现（需要 macOS 自带 sips）。`pnpm test:milocode-icons` 为跨平台 Node 资源回归，并已接入 `test:engineering-tools`。
+
+本轮验证：原资源回归 6/6 失败后，新资源 6/6 通过，独立解析每份 ICNS 的 11 帧及每份 ICO 的 9 帧，逐像素核对 DIB alpha/AND mask。重建检查通过；平台路径函数的开发/打包态共 8 项和实际三平台 Builder 资源映射通过，Builder 安全工程回归 22/22 通过。根 typecheck、Lint（84 条既有警告、0 错误）、架构检查（0 违规）通过；17 个受保护资源摘要未变。
+
+隔离 Electron 44.7.0 进程实际解码 Mac PNG 并成功调用 Dock `setIcon`，深浅底预览 26 张图片均可解码，结果为 `output/app-icon-fit-20261114/native-icon-result.json`，对比图为同目录 `preview.png`。预览首次使用过长 data URL 失败，改为本地 HTML/图片路径后通过，故障日志保留。上述是资源及原生加载验收，未重建安装包、未做 Windows 原生安装/任务栏验收，也未修改 `/Applications`、真实用户数据或远端更新源。
+
 2026-11-13，用户安装27号交付的 MiloCode 后反馈：启动先出现 ZCode Logo，随后切为 MiloCode；浏览器登录提示安全存储不可用，错误很快被账号加载失败覆盖。本文件记录经实际源码和运行证据确认后的修复边界。
 
 ## 启动品牌一致性

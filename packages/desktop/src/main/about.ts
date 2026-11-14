@@ -11,6 +11,7 @@ import {
   ZCODE_VERSION,
 } from "@zcode/shared";
 import { createCustomAboutDialogHtml } from "./aboutWindow.js";
+import { resolveDesktopAppIconPath } from "./desktopWindowChromeState.js";
 
 interface DesktopBuildMetadata {
   appVersion?: string;
@@ -225,12 +226,6 @@ export function createSystemAboutPanelOptions(
   };
 }
 
-function resolveAboutIconPath(isPackaged: boolean): string {
-  return isPackaged
-    ? join(process.resourcesPath, "icon.png")
-    : join(import.meta.dirname, "../../build/icon.png");
-}
-
 export async function showAboutDialog(
   parentWindow?: BrowserWindow,
   locale: Locale = DEFAULT_LOCALE,
@@ -244,7 +239,12 @@ export async function showAboutDialog(
   // 之前只有 macOS 使用自绘 About，Windows/Linux 仍走原生 message box。
   // 问题原因：各平台原生消息框的排版、图标和按钮样式差异很大，无法复用 macOS 参考样式。
   // 这里统一使用自绘 modal，保证 About 的品牌展示和多语言文案在三端一致。
-  const iconPath = resolveAboutIconPath(app.isPackaged);
+  const iconPath = resolveDesktopAppIconPath({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    mainDirectory: import.meta.dirname,
+  });
   const aboutWindow = new BrowserWindow({
     width: ABOUT_WINDOW_WIDTH,
     height: ABOUT_WINDOW_HEIGHT,

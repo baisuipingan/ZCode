@@ -910,6 +910,15 @@ export default {
       from: "build/icon.png",
       to: "icon.png",
     },
+    ...(targetPlatform.os === "darwin"
+      ? [
+          {
+            // Mac Dock 与 ICNS 共用专用留边图；保留通用 PNG 供内部配图和 Linux 使用。
+            from: "build/icon_mac.png",
+            to: "icon_mac.png",
+          },
+        ]
+      : []),
     ...(targetPlatform.os === "linux"
       ? [
           {
@@ -989,6 +998,7 @@ export default {
     },
   ],
   mac: {
+    icon: "build/icon.icns",
     ...(shouldPackageMiloCodeSparkle
       ? {
           // electron-builder 26 的 mac schema 无 extraFrameworks；extraFiles 以 Contents 为根，
@@ -1064,6 +1074,7 @@ export default {
     ],
   },
   win: {
+    icon: "build/icon.ico",
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
     // MiloCode 用内嵌 Ed25519 公钥验证清单及整包；Main 在下载后和实际安装前均强制验证。

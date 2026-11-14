@@ -1,6 +1,6 @@
 {
   "name": "zcode",
-  "version": "3.17.5",
+  "version": "3.17.6",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -60,6 +60,8 @@
     "ci:assert-node": "node scripts/assert-node-version.mjs",
     "build:cua": "pnpm --filter @zcode/zcode-cua build",
     "doctor:macos-release": "bash scripts/doctor-macos-release-app.sh",
+    "icons:milocode": "node scripts/generate-milocode-app-icons.mjs",
+    "test:milocode-icons": "node --test scripts/test/milocode-app-icon-assets.test.mjs",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix --fix-suggestions",
     "bootstrap": "node scripts/bootstrap.mjs",
@@ -80,7 +82,7 @@
     "provider:regression": "pnpm --filter @zcode/bootstrap... build && tsx apps/zcode-cli/tools/provider-regression/src/cli.ts",
     "test:engineering": "vitest run --project engineering",
     "test:engineering:affected": "node scripts/run-affected-engineering-tests.mjs",
-    "test:engineering-tools": "node --test scripts/test/affected-engineering-test-cli.test.mjs scripts/test/pre-push-worktree.test.mjs scripts/test/retired-app-unit-evidence.test.mjs scripts/test/e2e-remote-targets-check.test.mjs scripts/milocode-release.test.mjs scripts/milocode-release-admin.test.mjs packages/desktop/scripts/milocode-release-trust.test.mjs packages/desktop/scripts/milocode-shutdown-admission-smoke.mjs",
+    "test:engineering-tools": "node --test scripts/test/milocode-app-icon-assets.test.mjs scripts/test/affected-engineering-test-cli.test.mjs scripts/test/pre-push-worktree.test.mjs scripts/test/retired-app-unit-evidence.test.mjs scripts/test/e2e-remote-targets-check.test.mjs scripts/milocode-release.test.mjs scripts/milocode-release-admin.test.mjs packages/desktop/scripts/milocode-release-trust.test.mjs packages/desktop/scripts/milocode-shutdown-admission-smoke.mjs",
     "test:milocode-updates": "node --test scripts/milocode-release.test.mjs scripts/milocode-release-admin.test.mjs packages/desktop/scripts/milocode-release-trust.test.mjs packages/desktop/scripts/milocode-shutdown-admission-smoke.mjs",
     "test:milocode-update-ui": "node --test packages/ui/test/browser/manual-review/pending/milocode-manual-update.test.mjs",
     "check:e2e-remote-targets": "node scripts/check-e2e-remote-targets.mjs"

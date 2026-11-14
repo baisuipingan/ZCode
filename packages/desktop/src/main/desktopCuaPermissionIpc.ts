@@ -15,6 +15,7 @@ import {
   type CuaPermissionDragPanel,
 } from "./cuaPermissionDragPanel.js";
 import { createSystemSettingsWindowWatcher } from "./cuaSystemSettingsWindowWatcher.js";
+import { resolveDesktopAppIconPath } from "./desktopWindowChromeState.js";
 
 const execFileAsync = promisify(execFile);
 const MACOS_SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences";
@@ -30,15 +31,18 @@ const CUA_DRAG_ICON_SIZE = 64;
  *
  * 不能用 `nativeImage.createFromNamedImage("NSApplicationIcon")`：那取的是**当前宿主 app** 的
  * 图标，dev 下宿主是 Electron.app，于是拖拽时显示 Electron 默认图标。
- * 改为显式读随包的 ZCode 图标（electron-builder 已把 build/icon.png 打进 resources/icon.png）。
+ * 显式读取同一平台系统图标；Mac 专用留边资源与 Dock 保持一致，不能重新使用满画布通用图。
  */
 let cachedZCodeIcon: Electron.NativeImage | null = null;
 
 function resolveZCodeIcon(): Electron.NativeImage {
   if (cachedZCodeIcon && !cachedZCodeIcon.isEmpty()) return cachedZCodeIcon;
-  const iconPath = app.isPackaged
-    ? join(process.resourcesPath, "icon.png")
-    : join(import.meta.dirname, "..", "..", "build", "icon.png");
+  const iconPath = resolveDesktopAppIconPath({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    mainDirectory: import.meta.dirname,
+  });
   const image = nativeImage.createFromPath(iconPath);
   cachedZCodeIcon = image.isEmpty()
     ? nativeImage.createFromDataURL(CUA_HELPER_DRAG_ICON_DATA_URL)
