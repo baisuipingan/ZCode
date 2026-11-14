@@ -68,3 +68,9 @@ Windows 实际验收 run `43564372035` 已通过最终 EXE 摘要、可见安装
 修复只显式丢弃两次无业务返回值的异步操作结果；`Invoke-Cdp` 唯一成功输出仍为对应请求的 `result`。工程回归必须使用真实 loopback WebSocket、过滤异步事件和无关响应、重组超过 64 KiB 的分片响应，并断言只返回一个 Hashtable。若本机运行时不暴露内部 `VoidTaskResult`，注入等价的非空完成值再次验证；页面就绪、截图、安装及卸载门禁保持不变。
 
 本机 PowerShell 7.4.6 的真实连接未暴露该内部值，`scripts/test/windows-installer-cdp.test.ps1` 因此从正式脚本提取函数、仅替换 socket 工厂来注入非空 Task 完成值。修前严格复现三个输出（两个完成值与一个 Hashtable）；修后仅返回一个 Hashtable。真实 loopback WebSocket 的异步事件、无关 ID 和 70,000 字符分片响应回归同时通过。日志保存在 `output/3.17.4-release-audit/windows-cdp-transport/`；Windows workflow 先运行该返回值回归，再对相同最终 EXE 重做完整验收。
+
+## 全新 profile 的登录就绪边界
+
+Windows run `43566088857` 的五阶段报告均为通过，但实际 `installed-renderer.png` 仍显示「Initializing local data / 0s」。原探针只要求 root 文本和控件数量，启动遮罩本身也满足，导致过早截图并关闭应用。该通过记录不能证明登录页已就绪，也不能仅凭该瞬时画面判断应用卡住。
+
+验收继续使用全新未登录 profile，不增加首页 fallback。除原 document/title/root 条件外，必须同时确认静态 `#loading` 与 React `[data-testid="root-startup-loading"]` 已移除，且真实 `[data-testid="brand-account-submit"]` 登录按钮可见、启用、位于视口内且中心可命中。按钮事实及遮罩状态写入 `renderer-ready` 报告，截图须在该条件满足后取得；探针页面异常或超时仍失败。不修改 App、启动等待逻辑、安装包或签名，本次以相同 EXE 的下一轮 Windows CI 证明登录页可用。

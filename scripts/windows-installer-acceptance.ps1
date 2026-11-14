@@ -262,13 +262,45 @@ public static class MiloInstallerWindowProbe {
     $expression = @'
 (() => {
   const root = document.querySelector('#root');
+  const login = root?.querySelector('[data-testid="brand-account-submit"]');
+  const visible = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return box.width > 0 && box.height > 0 && style.display !== 'none' &&
+      style.visibility !== 'hidden' && style.opacity !== '0' &&
+      !element.closest('[hidden],[inert],[aria-hidden="true"]');
+  };
+  const box = login?.getBoundingClientRect();
+  const x = box ? box.left + box.width / 2 : -1;
+  const y = box ? box.top + box.height / 2 : -1;
+  const loginVisible = visible(login);
+  const loginEnabled = login instanceof HTMLButtonElement && !login.disabled &&
+    login.getAttribute('aria-disabled') !== 'true';
+  const loginInViewport = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
+  const hit = loginInViewport ? document.elementFromPoint(x, y) : null;
+  const loginClickable = loginVisible && loginEnabled && loginInViewport &&
+    getComputedStyle(login).pointerEvents !== 'none' && !!hit && login.contains(hit);
+  const staticLoadingPresent = !!document.querySelector('#loading');
+  const startupLoadingPresent = !!document.querySelector('[data-testid="root-startup-loading"]');
   return {
     state: document.readyState,
     title: document.title,
     url: location.href,
     rootChildren: root?.childElementCount ?? 0,
     textLength: root?.innerText?.trim().length ?? 0,
-    controls: root?.querySelectorAll('button,input,[role="button"]').length ?? 0
+    controls: root?.querySelectorAll('button,input,[role="button"]').length ?? 0,
+    staticLoadingPresent,
+    startupLoadingPresent,
+    loginSelector: '[data-testid="brand-account-submit"]',
+    loginVisible,
+    loginEnabled,
+    loginInViewport,
+    loginClickable,
+    loginReady: !staticLoadingPresent && !startupLoadingPresent && loginClickable,
+    loginText: login?.innerText?.trim() ?? '',
+    visibleErrors: Array.from(root?.querySelectorAll('[role="alert"]') ?? [])
+      .filter(visible).map(element => element.innerText.trim()).filter(Boolean)
   };
 })()
 '@
@@ -281,14 +313,23 @@ public static class MiloInstallerWindowProbe {
                 $evaluation = Invoke-Cdp $page.webSocketDebuggerUrl 'Runtime.evaluate' @{ expression = $expression; returnByValue = $true }
                 if ($evaluation.ContainsKey('exceptionDetails')) { throw 'Renderer readiness probe threw an exception.' }
                 $value = $evaluation.result.value
+                if ($value.visibleErrors.Count -gt 0) { throw "Renderer displayed an error: $($value.visibleErrors -join '; ')" }
+                # 启动遮罩也有文本和按钮；全新 profile 必须实际进入可点击的品牌登录页。
                 if ($value.state -eq 'complete' -and $value.title -match 'MiloCode' -and
-                    $value.rootChildren -gt 0 -and $value.textLength -gt 10 -and $value.controls -gt 0) {
+                    $value.rootChildren -gt 0 -and $value.textLength -gt 10 -and $value.controls -gt 0 -and
+                    -not $value.staticLoadingPresent -and -not $value.startupLoadingPresent -and
+                    $value.loginVisible -and $value.loginEnabled -and $value.loginInViewport -and $value.loginClickable) {
                     $ready = $value
                     $pageSocket = $page.webSocketDebuggerUrl
                     break
                 }
+                $lastProbeError = $value | ConvertTo-Json -Depth 6 -Compress
             }
-        } catch { $lastProbeError = $_.Exception.Message }
+        } catch {
+            if ($_.Exception.Message -eq 'Renderer readiness probe threw an exception.' -or
+                $_.Exception.Message.StartsWith('Renderer displayed an error:')) { throw }
+            $lastProbeError = $_.Exception.Message
+        }
         if (-not $ready) { Start-Sleep -Milliseconds 700 }
     }
     if (-not $ready) { throw "Installed application renderer did not become ready. Last probe: $lastProbeError" }
