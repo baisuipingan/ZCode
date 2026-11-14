@@ -1322,6 +1322,13 @@ global:
   acceptedUpstreamSnapshot: scripts/architecture/upstream-snapshot.json
 
 exceptions:
+  - id: milocode-visible-branding-existing-copy
+    rule: unmanaged-new-file
+    paths:
+      - packages/services/src/feedback/feedbackLogArchive.ts
+      - packages/services/src/file/workspaceFileIgnore.ts
+      - apps/zcode-cli/packages/cli/src/tui-prompt-handler-runtime.ts
+    reason: 已准入上游存量文件本轮只修改产品展示文案，AST复核确认导入、持久化标记、控制流及状态owner不变；不为品牌文案接管整个feedback、file或CLI运行时目录。本条仅覆盖三个既有路径，新增源码仍需登记managed模块。
   - id: session-features-attribution-header-edit
     rule: unmanaged-new-file
     paths: [apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts]

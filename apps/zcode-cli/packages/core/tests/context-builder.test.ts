@@ -101,12 +101,12 @@ describe("ContextBuilder meta user context", () => {
       false,
       false,
     ]);
-    expect(result.systemMessages[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(result.systemMessages[0]?.content).toBe("You are MiloCode, an interactive agent");
 
     const stableBody = String(result.systemMessages[1]?.content ?? "");
     expect(stableBody).toMatch(/^\n?You are an agent working with the user toward their goals/);
     expect(stableBody).not.toContain("# Agent Identity");
-    expect(stableBody).not.toContain("You are ZCode, an interactive agent");
+    expect(stableBody).not.toContain("You are MiloCode, an interactive agent");
     expect(stableBody).toContain("# Harness");
     const harnessBullets = stableBody.split("# Harness\n")[1]?.split("\n") ?? [];
     expect(harnessBullets).toHaveLength(5);
@@ -186,7 +186,7 @@ describe("ContextBuilder meta user context", () => {
     }
   });
 
-  it("injects the stable ZCode Desktop Context before dynamic behavior", () => {
+  it("injects the stable MiloCode Desktop Context before dynamic behavior", () => {
     const result = createContextBuilder({
       workingDirectory: "/workspace",
       presentationSurface: "zcode_desktop",
@@ -204,14 +204,14 @@ describe("ContextBuilder meta user context", () => {
     );
     expect(desktopSections).toHaveLength(1);
     expect(desktopSections[0]).toMatchObject({
-      name: "ZCode Desktop Context",
+      name: "MiloCode Desktop Context",
       source: "desktop_context",
       injectionTarget: "system",
       cacheHint: "stable",
     });
     expect(desktopSections[0]?.content).toBe(
       [
-        "# ZCode Desktop Context",
+        "# MiloCode Desktop Context",
         "",
         "### Interactive views",
         "- No visualization output directory is supplied; inline Gen UI is unavailable.",
@@ -243,8 +243,8 @@ describe("ContextBuilder meta user context", () => {
     expect(desktopIndex).toBeLessThan(dynamicBehaviorIndex);
 
     expect(result.systemMessages).toHaveLength(3);
-    expect(result.systemMessages[1]?.content).toContain("# ZCode Desktop Context");
-    expect(result.systemMessages[2]?.content).not.toContain("# ZCode Desktop Context");
+    expect(result.systemMessages[1]?.content).toContain("# MiloCode Desktop Context");
+    expect(result.systemMessages[2]?.content).not.toContain("# MiloCode Desktop Context");
   });
 
   it("does not inject the Desktop context for the default terminal surface", () => {
@@ -278,7 +278,7 @@ describe("ContextBuilder meta user context", () => {
       cliPrefixPrompt: "legacy override",
     } as any).build();
 
-    expect(result.systemMessages[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(result.systemMessages[0]?.content).toBe("You are MiloCode, an interactive agent");
   });
 
   it("covers default body safety, runtime, and tool-guidance semantic anchors", () => {
@@ -401,7 +401,7 @@ describe("ContextBuilder meta user context", () => {
     expect(result.metaUserAttachments.map((attachment) => attachment.source)).toEqual([
       "context_prefix",
     ]);
-    expect(result.systemMessages[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(result.systemMessages[0]?.content).toBe("You are MiloCode, an interactive agent");
     expect(result.systemMessages[1]?.content).toBe("\nYou are concise for this task.");
     expect(result.sections.some((section) => section.source === "env_info")).toBe(true);
     const meta = metaAttachment(result, "context_prefix");
@@ -831,10 +831,10 @@ describe("ContextBuilder meta user context", () => {
     const stableBody = result.systemMessages[1]?.content ?? "";
     const dynamicSystem = result.systemMessages[2]?.content ?? "";
     const meta = metaAttachment(result, "context_prefix");
-    expect(cliPrefix).toBe("You are ZCode, an interactive agent");
+    expect(cliPrefix).toBe("You are MiloCode, an interactive agent");
     expect(stableBody).not.toContain("# Agent Identity");
     expect(stableBody).toMatch(/^\n?You are an agent working with the user toward their goals/);
-    expect(stableBody).not.toContain("You are ZCode, an interactive agent");
+    expect(stableBody).not.toContain("You are MiloCode, an interactive agent");
     expect(stableBody).toContain("# Harness");
     expect(stableBody).not.toContain("# Session-specific guidance");
     expect(stableBody).not.toContain("# Environment");
@@ -1056,7 +1056,7 @@ describe("ContextBuilder meta user context", () => {
       "system",
     ]);
     expect(result.metaUserAttachments).toEqual([]);
-    expect(result.systemMessages[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(result.systemMessages[0]?.content).toBe("You are MiloCode, an interactive agent");
     expect(result.systemMessages[1]?.content).not.toContain("# Agent Identity");
     expect(result.systemMessages[1]?.content).toMatch(
       /^\n?You are an agent working with the user toward their goals/,
@@ -1333,7 +1333,7 @@ describe("ContextBuilder meta user context", () => {
         "",
         "Recent commits:\ned2cac59d Merge branch 'feat/trajectory' of https://example.com/team/project into feat/trajectory\n07957b58c chore: update doc",
         "",
-        "ZCode attached this context automatically; it isn't part of the user's message. It describes the user's own account and workspace, so they don't need it reported back.",
+        "MiloCode attached this context automatically; it isn't part of the user's message. It describes the user's own account and workspace, so they don't need it reported back.",
       ].join("\n"),
     );
     expect(
@@ -1382,12 +1382,12 @@ describe("ContextBuilder meta user context", () => {
     const prefixSection = buildCliPrefixSection();
     const identitySection = buildIdentitySection();
 
-    expect(prefixSection.content).toBe("You are ZCode, an interactive agent");
+    expect(prefixSection.content).toBe("You are MiloCode, an interactive agent");
     expect(identitySection.content).toMatch(
       /^\n?You are an agent working with the user toward their goals/,
     );
     expect(identitySection.content).not.toContain("# Agent Identity");
-    expect(identitySection.content).not.toContain("You are ZCode, an interactive agent");
+    expect(identitySection.content).not.toContain("You are MiloCode, an interactive agent");
     expect(`${prefixSection.content}\n${identitySection.content}`).not.toContain("${");
     expect(`${prefixSection.content}\n${identitySection.content}`).not.toContain("an AI assistant");
   });
@@ -1602,7 +1602,7 @@ describe("context builder — workflow actor identity", () => {
     ).toBe(true);
     expect(result.sections.map((section) => section.source)).not.toContain("cli_prefix");
     expect(result.systemMessages.map((m) => String(m.content)).join("\n")).not.toContain(
-      "You are ZCode, an interactive agent",
+      "You are MiloCode, an interactive agent",
     );
   });
 

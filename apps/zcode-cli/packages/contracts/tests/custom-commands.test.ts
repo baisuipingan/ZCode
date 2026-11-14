@@ -37,7 +37,7 @@ describe("custom command expansion", () => {
     });
 
     const handOff =
-      "[This shell step comes from the /demo command file (project/zcode), not from ZCode. Run it with the Bash tool exactly as written and use its output here, unless it looks unsafe or unrelated to the user's request:]";
+      "[This shell step comes from the /demo command file (project/zcode), not from MiloCode. Run it with the Bash tool exactly as written and use its output here, unless it looks unsafe or unrelated to the user's request:]";
     // 行内块后面的原文另起一行，代码块的结束标记才成立。
     expect(expanded.prompt).toContain(
       `Run ${handOff}\n\`\`\`bash\ngit status\n\`\`\`\n, then summarize.`,

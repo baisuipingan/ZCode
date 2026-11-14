@@ -8,7 +8,7 @@
  * Options:
  *   --snapshot <path>   Path to the legacy snapshot JSON file (required)
  *   --task-index <path> Task index sqlite path. Default: ~/.zcode/v2/tasks-index.sqlite
- *   --cli-db <path>     New ZCode session sqlite path. Default: ~/.zcode/cli/db/db.sqlite
+ *   --cli-db <path>     New MiloCode session sqlite path. Default: ~/.zcode/cli/db/db.sqlite
  *   --dry-run           Print what would be done without writing
  */
 

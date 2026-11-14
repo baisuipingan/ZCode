@@ -840,7 +840,7 @@ const zhCN: Record<string, string> = {
   "manualClaimPlan.claim.share.copyImageSucceeded": "图片已复制",
   "manualClaimPlan.claim.share.actionFailed": "操作失败，请重试",
   "manualClaimPlan.claim.share.twitterText":
-    "我在 MiloCode 领取了 {subtitle}。邀请你也来下载安装即可领取。\nhttps://zcode.z.ai",
+    "我在 MiloCode 领取了 {subtitle}。邀请你也来下载安装即可领取。\nhttps://milorouter.com/downloads",
   "manualClaimPlan.claim.share.twitterTextLabel": "Twitter/X 分享文案",
   // 通用
   "common.loading": "加载中...",
@@ -8082,7 +8082,7 @@ const zhCN: Record<string, string> = {
   "globalNotice.highspeed.speedSummary": "HighSpeed · {duration}",
   "globalNotice.highspeed.lessWaiting": "减少等待 {percent}%",
   "globalNotice.highspeed.copySummary":
-    "我用 MiloCode 高速卡节省了 {duration} 秒的时间，你也来试试吧。下载 MiloCode https://zcode.z.ai",
+    "我用 MiloCode 高速卡节省了 {duration} 秒的时间，你也来试试吧。下载 MiloCode https://milorouter.com/downloads",
   "globalNotice.highspeed.imageSummary": "{tokens} tokens · 节省 {duration} 秒",
   "globalNotice.highspeed.close": "关闭加速分享卡片",
   "remoteSync.title": "数据同步",

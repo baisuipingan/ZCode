@@ -857,7 +857,7 @@ describe("AgentRuntime trace propagation", () => {
     await runtime.executeTurn("hello");
 
     expect(requests[0]?.[0]).toEqual(expect.objectContaining({ role: "system" }));
-    expect(requests[0]?.[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(requests[0]?.[0]?.content).toBe("You are MiloCode, an interactive agent");
     expect(requests[0]?.[1]?.content).toBe("\nYou are terse for this session.");
     // 自定义 prompt 不影响环境与模型公告。
     expect(requests[0]?.[2]?.content).toContain("# Environment\n");
@@ -1042,7 +1042,7 @@ describe("AgentRuntime trace propagation", () => {
       "Learning output style is active. Remember to follow the specific guidelines for this style.",
     );
     expect(second?.messages).toEqual([
-      { role: "system", cacheControl: undefined, content: "You are ZCode, an interactive agent" },
+      { role: "system", cacheControl: undefined, content: "You are MiloCode, an interactive agent" },
       { role: "system", cacheControl: EPHEMERAL, content: expect.stringContaining("# Harness") },
       {
         role: "system",
@@ -1071,7 +1071,7 @@ describe("AgentRuntime trace propagation", () => {
     const stableBody = second?.messages[1]?.content ?? "";
     const dynamicSystem = second?.messages[2]?.content ?? "";
 
-    expect(cliPrefix).toBe("You are ZCode, an interactive agent");
+    expect(cliPrefix).toBe("You are MiloCode, an interactive agent");
     expect(stableBody).not.toContain("# Agent Identity");
     expect(stableBody).toContain(
       'You are an interactive agent that helps users according to your "Output Style", which describes how you should respond to user queries.',
@@ -1243,7 +1243,7 @@ describe("AgentRuntime trace propagation", () => {
       TODAY_REMINDER,
       "first question",
     ]);
-    expect(requests[0]?.[0]?.content).toBe("You are ZCode, an interactive agent");
+    expect(requests[0]?.[0]?.content).toBe("You are MiloCode, an interactive agent");
     expect(requests[0]?.[1]?.content).not.toContain("# Agent Identity");
     expect(requests[0]?.[1]?.content).toMatch(
       /^\n?You are an agent working with the user toward their goals/,
@@ -1397,7 +1397,7 @@ describe("AgentRuntime trace propagation", () => {
       },
     ];
     const systems = [
-      { role: "system", cacheControl: undefined, content: "You are ZCode, an interactive agent" },
+      { role: "system", cacheControl: undefined, content: "You are MiloCode, an interactive agent" },
       { role: "system", cacheControl: EPHEMERAL, content: expect.any(String) },
       { role: "system", cacheControl: EPHEMERAL, content: expect.any(String) },
     ];

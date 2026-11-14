@@ -928,7 +928,7 @@ const enUS: Record<string, string> = {
   "manualClaimPlan.claim.share.copyImageSucceeded": "Image copied",
   "manualClaimPlan.claim.share.actionFailed": "Share action failed. Please try again.",
   "manualClaimPlan.claim.share.twitterText":
-    "I claimed {subtitle} on MiloCode. Download and install MiloCode to claim yours. https://zcode.z.ai",
+    "I claimed {subtitle} on MiloCode. Download and install MiloCode to claim yours. https://milorouter.com/downloads",
   "manualClaimPlan.claim.share.twitterTextLabel": "Twitter/X post text",
   // Common
   "common.loading": "Loading...",
@@ -8543,7 +8543,7 @@ const enUS: Record<string, string> = {
   "globalNotice.highspeed.speedSummary": "HighSpeed · {duration}",
   "globalNotice.highspeed.lessWaiting": "{percent}% less waiting",
   "globalNotice.highspeed.copySummary":
-    "I used the MiloCode Highspeed card and saved {duration}s. Give it a try. Download MiloCode https://zcode.z.ai",
+    "I used the MiloCode Highspeed card and saved {duration}s. Give it a try. Download MiloCode https://milorouter.com/downloads",
   "globalNotice.highspeed.imageSummary": "{tokens} tokens · {duration}s saved",
   "globalNotice.highspeed.close": "Close Highspeed share card",
   "remoteSync.title": "Data sync",

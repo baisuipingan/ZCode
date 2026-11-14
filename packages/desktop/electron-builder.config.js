@@ -268,7 +268,7 @@ function assertPackagedCuaHelper(context) {
   );
   if (!existsSync(appPath)) {
     throw new Error(
-      `Packaged ZCode is missing bundled Computer Use Helper: ${appPath}`,
+      `Packaged MiloCode is missing bundled Computer Use Helper: ${appPath}`,
     );
   }
 }
@@ -286,7 +286,7 @@ if (
   !macSigningIdentity
 ) {
   throw new Error(
-    "ZCode Preview macOS packaging requires APPLE_SIGNING_IDENTITY or CSC_NAME when ZCODE_ENABLE_MAC_SIGN=1",
+    "MiloCode Preview macOS packaging requires APPLE_SIGNING_IDENTITY or CSC_NAME when ZCODE_ENABLE_MAC_SIGN=1",
   );
 }
 
@@ -371,7 +371,7 @@ async function runTimedAsync(label, fn) {
 
 function resolveAppAsarPath(context) {
   if (context.electronPlatformName === "darwin") {
-    const appName = `${context.packager?.appInfo?.productFilename ?? "ZCode"}.app`;
+    const appName = `${context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName}.app`;
     return resolve(
       context.appOutDir,
       appName,
@@ -386,7 +386,7 @@ function resolveAppAsarPath(context) {
 
 function resolvePackagedResourcesDir(context) {
   if (context.electronPlatformName === "darwin") {
-    const appName = `${context.packager?.appInfo?.productFilename ?? "ZCode"}.app`;
+    const appName = `${context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName}.app`;
     return resolve(context.appOutDir, appName, "Contents", "Resources");
   }
 
@@ -681,15 +681,14 @@ export default {
   appId: desktopProductIdentity.appId,
   // 26.17.0 自带校验摘要的完整 3.12 套装，包含 ARM Mac 编译器及与之匹配的 Windows stub。
   toolsets: { nsis: "1.2.1" },
-  // Linux deb 打包（fpm）会校验 package metadata 中的 homepage、author.email、maintainer。
-  // CI 环境下若这些字段缺失会在产物阶段直接失败。这里统一在构建配置补齐，避免依赖外部注入。
+  // 修复原因：安装包属性仍读取上游元数据；展示归属指向 MiloCode，版权归属继续由 LICENSE 保留。
+  // fpm 在显式配置 maintainer 时不依赖 author.email，不沿用上游邮箱或虚构我方联系地址。
   extraMetadata: {
     version: buildMetadata.appVersion,
     zcodeProductFlavor: desktopProductIdentity.flavor,
-    homepage: "https://zcode.z.ai",
+    homepage: "https://milorouter.com",
     author: {
-      name: "ZCode",
-      email: "dev@zcode.z.ai",
+      name: "MiloCode",
     },
   },
   // macOS 签名阶段会对 Electron Framework 下每个语言包逐个 codesign。
@@ -1092,7 +1091,7 @@ export default {
     // 与 /usr/share/icons/hicolor/*/apps/zcode.png 保持一致。
     executableName: desktopProductIdentity.linuxExecutableName,
     category: "Development",
-    maintainer: "ZCode <dev@zcode.z.ai>",
+    maintainer: "MiloCode",
   },
   deb: {
     // 生产版与 Preview 必须是两个 dpkg package；只改可执行名仍会让安装器把另一版本当成升级替换。

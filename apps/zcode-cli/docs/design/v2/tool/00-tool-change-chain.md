@@ -1,5 +1,13 @@
 # Tool Change Chain Spec
 
+## MiloCode 可见品牌复审（2026-11-14）
+
+按根规格 `docs/fork/36-user-visible-branding-audit.md`，CLI/TUI 的自家产品展示、内置插件指南和模型提示统一使用 MiloCode。
+工具描述、通知和上下文中的产品称呼仅替换品牌文字，工具名、schema、权限、事件、稳定错误标记、
+配置目录、协议与缓存顺序规则不变；新请求的工具描述/提示前缀字节会变，已存历史不重写。
+真实外部 ZCode Sites 服务、ZAI/OAuth 身份注册和实际文档/资源链接保留原归属，不假称为 MiloCode 服务。
+验收逐项核对源码及随包种子资源，并运行受影响 CLI 的现有范围测试、类型检查与 lint，不以全量标识替换代替展示审计。
+
 ## 托管后台任务唤醒保留原扣费归属（2026-11-13）
 
 Agent/Bash/Workflow 创建任务时由 runtime task registry 克隆创建轮的 `billingBinding`；完成通知与

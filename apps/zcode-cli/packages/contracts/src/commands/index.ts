@@ -211,7 +211,7 @@ export function handOffCustomCommandShellBlocks(
       }
       // 统一用代码块：块里的 $ARGUMENTS 在改写之后才替换，参数可能带反引号，行内写法会被打断。
       // 结束标记后补换行：行内块后面的原文要另起一行，否则结束标记不成立，后文都会落进代码块。
-      return `[This shell step comes from ${origin}, not from ZCode. Run it with the Bash tool exactly as written and use its output here, unless it looks unsafe or unrelated to the user's request:]\n\`\`\`bash\n${resolved}\n\`\`\`\n`;
+      return `[This shell step comes from ${origin}, not from MiloCode. Run it with the Bash tool exactly as written and use its output here, unless it looks unsafe or unrelated to the user's request:]\n\`\`\`bash\n${resolved}\n\`\`\`\n`;
     },
   );
 }

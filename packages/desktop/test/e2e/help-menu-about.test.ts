@@ -17,6 +17,7 @@ import {
   waitForWorkspaceApp,
   seedSettings,
   readSettings,
+  clickAboutMenuItem,
 } from "./helpers/desktop-app.js";
 import { startHelpConfigFixture } from "./helpers/help-client-config-fixture.js";
 
@@ -132,7 +133,7 @@ async function assertAboutWindow() {
           );
           return (
             typeof title === "string" &&
-            title.includes("ZCode") &&
+            title.includes("MiloCode") &&
             title.includes(electron.app.getVersion())
           );
         }),
@@ -149,6 +150,33 @@ async function assertAboutWindow() {
       }
     });
   }
+}
+
+async function assertNativeAboutEntry(label: string) {
+  // 截图中的遗漏发生在 macOS 原生菜单；问号菜单通过不能证明原生入口正确。
+  let labels: string[] = [];
+  await browser
+    .waitUntil(
+      async () => {
+        labels = await browser.electron.execute(
+          (electron) =>
+            electron.Menu.getApplicationMenu()?.items.flatMap(
+              (topLevel) =>
+                // 隐藏/退出由 app.name 动态生成；WDIO 注入的 ZCode E2E 身份不是生产文案。
+                topLevel.submenu?.items
+                  .filter((item) => item.visible && item.role !== "hide" && item.role !== "quit")
+                  .map((item) => item.label) ?? [],
+            ) ?? [],
+        );
+        return labels.includes(label) && !labels.some((value) => /\bZCode\b/.test(value));
+      },
+      { timeout: 10_000, timeoutMsg: `原生菜单尚未显示 ${label}，或仍残留旧品牌` },
+    )
+    .catch((error: unknown) => {
+      throw new Error(`${String(error)}; 原生菜单文案=${JSON.stringify(labels)}`);
+    });
+  await clickAboutMenuItem(label);
+  await assertAboutWindow();
 }
 
 describe(`问号菜单应用入口（${expectedFlavor}）`, () => {
@@ -193,13 +221,13 @@ describe(`问号菜单应用入口（${expectedFlavor}）`, () => {
       "Copy device MID",
       "Resource manager",
       ...(production ? ["Check for updates"] : []),
-      "About ZCode",
+      "About MiloCode",
     ]);
     expect(await $$('[role="menu"] [role="separator"]')).toHaveLength(1);
     await browser.saveScreenshot(join(tmpdir(), "zcode-help-export-en-light.png"));
     await assertLogExport("Export logs", "Exporting logs...");
     await openMenu();
-    await $('[role="menuitem"]*=About ZCode').click();
+    await $('[role="menuitem"]*=About MiloCode').click();
     await assertAboutWindow();
   });
 
@@ -304,13 +332,36 @@ describe(`问号菜单应用入口（${expectedFlavor}）`, () => {
       "复制设备 MID",
       "资源管理器",
       ...(production ? ["检查更新"] : []),
-      "关于 ZCode",
+      "关于 MiloCode",
     ]);
     expect(await $$('[role="menu"] [role="separator"]')).toHaveLength(1);
     await browser.saveScreenshot(join(tmpdir(), "zcode-help-export-zh-dark.png"));
     await assertLogExport("导出日志", "正在导出日志中");
     await openMenu();
-    await $('[role="menuitem"]*=关于 ZCode').click();
+    await $('[role="menuitem"]*=关于 MiloCode').click();
     await assertAboutWindow();
   });
+});
+
+describe("原生菜单品牌与关于窗口", () => {
+  let originalSettings: Awaited<ReturnType<typeof readSettings>>;
+  before(async () => {
+    originalSettings = await readSettings();
+  });
+  after(async () => {
+    await seedSettings(originalSettings);
+  });
+
+  for (const [locale, label] of [
+    ["en-US", "About MiloCode"],
+    ["zh-CN", "关于 MiloCode"],
+  ] as const) {
+    it(`原生菜单品牌 ${locale}`, async function () {
+      this.timeout(30_000);
+      // 原生品牌验收不依赖模型供应商、登录或工作区引导，覆盖冷启动时同样可用的菜单。
+      await seedSettings({ locale, localePreference: locale });
+      await browser.refresh();
+      await assertNativeAboutEntry(label);
+    });
+  }
 });

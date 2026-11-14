@@ -105,12 +105,12 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Record<Locale, string>> = {
     "en-US": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements.",
   },
   "restore-legacy-sessions": {
-    "zh-CN": "检查、规划或执行 ACP 时代 ZCode 旧 session 恢复到新的 ZCode 任务与会话库。",
-    "en-US": "Inspect, plan, or restore old ACP-era ZCode sessions into the new ZCode task and session stores.",
+    "zh-CN": "检查、规划或执行 ACP 时代旧会话的恢复，将其迁移到 MiloCode 的任务与会话库。",
+    "en-US": "Inspect, plan, or restore old ACP-era sessions into the MiloCode task and session stores.",
   },
   "plugin-creator": {
-    "zh-CN": "创建、校验 ZCode 插件，并指导本地安装与更新。",
-    "en-US": "Create and validate ZCode plugins, and guide local installation and updates.",
+    "zh-CN": "创建、校验 MiloCode 插件，并指导本地安装与更新。",
+    "en-US": "Create and validate MiloCode plugins, and guide local installation and updates.",
   },
   "skill-creator": {
     "zh-CN": "创建新技能、编辑现有技能并迭代措辞。适用于从零编写 SKILL.md、改进已有技能、把重复工作流沉淀为可复用技能，或优化技能描述以提升触发可靠性。",
@@ -141,8 +141,8 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Record<Locale, string>> = {
     "en-US": "Use before claiming work is complete, fixed, or passing. Requires running verification commands and confirming output before success claims.",
   },
   "web-gui-tester": {
-    "zh-CN": "使用 ZCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试，通过真实用户交互、DOM 语义证据和截图验证功能、交互与响应式布局。",
-    "en-US": "Run pure GUI black-box tests against websites and local web frontends with ZCode Browser Use, combining real user interactions, semantic DOM evidence, and inspected screenshots.",
+    "zh-CN": "使用 MiloCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试，通过真实用户交互、DOM 语义证据和截图验证功能、交互与响应式布局。",
+    "en-US": "Run pure GUI black-box tests against websites and local web frontends with MiloCode Browser Use, combining real user interactions, semantic DOM evidence, and inspected screenshots.",
   },
   "writing-plans": {
     "zh-CN": "已有规格或多步骤任务需求，在动代码前用于编写实现计划。",

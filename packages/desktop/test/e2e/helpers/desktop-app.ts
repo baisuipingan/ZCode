@@ -1449,19 +1449,20 @@ export async function switchToNewestWindow() {
   await switchToHandle(newestHandle);
 }
 
-export async function clickAboutMenuItem() {
-  await browser.electron.execute((electron) => {
+export async function clickAboutMenuItem(label = "About MiloCode") {
+  await browser.electron.execute((electron, aboutLabel) => {
     const menu = electron.Menu.getApplicationMenu();
-    const topMenuLabel = process.platform === "darwin" ? electron.app.name : "Help";
-    const topMenu = menu?.items.find((item) => item.label === topMenuLabel);
-    const menuItem = topMenu?.submenu?.items.find((item) => item.label === "About ZCode");
+    // 修复原因：原生菜单使用共享的多语言文案，不能继续以旧品牌或固定英文 Help 定位。
+    const menuItem = menu?.items
+      .flatMap((item) => item.submenu?.items ?? [])
+      .find((item) => item.label === aboutLabel);
 
     if (!menuItem) {
-      throw new Error(`未找到 About ZCode 菜单项: ${topMenuLabel}`);
+      throw new Error(`未找到原生关于菜单项: ${aboutLabel}`);
     }
 
     menuItem.click(undefined as never, undefined, undefined as never);
-  });
+  }, label);
 }
 
 export async function clickDockMenuItem(itemLabel: string) {

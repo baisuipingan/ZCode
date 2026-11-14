@@ -1,7 +1,7 @@
 {
   "name": "visualize",
   "version": "0.1.1",
-  "description": "Create interactive explanations, charts and design previews in ZCode conversations.",
+  "description": "Create interactive explanations, charts and design previews in MiloCode conversations.",
   "author": {
     "name": "ZCode"
   },

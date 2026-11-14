@@ -3,13 +3,15 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HELPER_APP_NAME, HELPER_DISPLAY_NAME } from "@zcode/zcode-cua/broker/helperConstants";
+import { HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
 import { afterEach, describe, expect, it } from "vitest";
 
 const isWindows = process.platform === "win32";
 const tempDirs: string[] = [];
 const TEST_FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(TEST_FILE_DIR, "../../..");
+// Helper 的真实可执行名保持兼容，不能把可变展示名当作 app 内文件名。
+const HELPER_EXECUTABLE_NAME = HELPER_APP_NAME.replace(/\.app$/, "");
 
 function makeTempDir(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -51,7 +53,7 @@ fi
   );
 }
 
-function createReleaseApp(rootDir: string, productName = "ZCode") {
+function createReleaseApp(rootDir: string, productName = "MiloCode") {
   const appPath = join(rootDir, `${productName}.app`);
 
   writeExecutable(join(appPath, "Contents", "MacOS", productName), "#!/bin/bash\n");
@@ -66,7 +68,7 @@ function createZcodeHomeHelper(zcodeHome: string, variant?: string) {
     ...(variant ? [variant] : []),
     HELPER_APP_NAME,
   );
-  writeFakeMachOExecutable(join(helperAppPath, "Contents", "MacOS", HELPER_DISPLAY_NAME));
+  writeFakeMachOExecutable(join(helperAppPath, "Contents", "MacOS", HELPER_EXECUTABLE_NAME));
   return helperAppPath;
 }
 
@@ -97,7 +99,7 @@ describe.skipIf(isWindows)("doctor-macos-release-app.sh", () => {
     const workspaceDir = makeTempDir("zcode-macos-preview-doctor-");
     const binDir = join(workspaceDir, "bin");
     const toolLog = join(workspaceDir, "tool.log");
-    const { appPath } = createReleaseApp(workspaceDir, "ZCode Preview");
+    const { appPath } = createReleaseApp(workspaceDir, "MiloCode Preview");
     const zcodeHome = join(workspaceDir, ".zcode");
     const helperAppPath = createZcodeHomeHelper(zcodeHome, "preview");
 
@@ -112,13 +114,13 @@ describe.skipIf(isWindows)("doctor-macos-release-app.sh", () => {
       ZCODE_HOME: zcodeHome,
     });
 
-    expect(output).toContain(`validating ZCode Preview.app: ${appPath}`);
+    expect(output).toContain(`validating MiloCode Preview.app: ${appPath}`);
     const log = readFileSync(toolLog, "utf-8");
     expect(log).toContain(`codesign\t--verify\t--deep\t--strict\t${appPath}`);
     expect(log).toContain(`codesign\t--verify\t--deep\t--strict\t${helperAppPath}`);
   });
 
-  it("默认只验收安装后的 ZCode.app，不强绑 Computer Use Helper 发布", () => {
+  it("默认只验收安装后的 MiloCode.app，不强绑 Computer Use Helper 发布", () => {
     const workspaceDir = makeTempDir("zcode-macos-release-doctor-");
     const binDir = join(workspaceDir, "bin");
     const toolLog = join(workspaceDir, "tool.log");
@@ -258,7 +260,10 @@ describe.skipIf(isWindows)("doctor-macos-release-app.sh", () => {
     const { appPath } = createReleaseApp(workspaceDir);
     const zcodeHome = join(workspaceDir, ".zcode");
     const helperAppPath = createZcodeHomeHelper(zcodeHome);
-    writeExecutable(join(helperAppPath, "Contents", "MacOS", HELPER_DISPLAY_NAME), "#!/bin/bash\n");
+    writeExecutable(
+      join(helperAppPath, "Contents", "MacOS", HELPER_EXECUTABLE_NAME),
+      "#!/bin/bash\n",
+    );
 
     mkdirSync(binDir, { recursive: true });
     writeFakeTool(binDir, "codesign", toolLog);

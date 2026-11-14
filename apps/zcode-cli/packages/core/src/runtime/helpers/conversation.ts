@@ -153,7 +153,7 @@ export function formatBrowserAmbientUserInput(
     ...(context.currentUrl ? [`- Current URL: ${context.currentUrl}`] : []),
     "</in-app-browser-context>",
     "",
-    "## My request for ZCode:",
+    "## My request for MiloCode:",
     input,
   ];
   return lines.join("\n");

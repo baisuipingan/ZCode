@@ -48,6 +48,8 @@ try {
                     ? "该设备不属于当前账号"
                     : "This device does not belong to this account";
             await h.page.getByRole("heading", { name: title, exact: true }).waitFor();
+            assert.match(await h.page.title(), /MiloCode/);
+            assert.equal(await h.page.getByText("ZCode", { exact: true }).count(), 0);
             if (screen === "login") {
               assert.deepEqual(
                 await h.page.getByRole("button").allTextContents(),
