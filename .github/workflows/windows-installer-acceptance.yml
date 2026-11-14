@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       sha256:
-        description: Final 3.17.7 EXE SHA256 (leave empty to use the tracked manifest)
+        description: Final 3.17.8 EXE SHA256 (leave empty to use the tracked manifest)
         required: false
         type: string
 
@@ -62,9 +62,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content windows-installer-acceptance.json -Raw | ConvertFrom-Json
           if ($manifest.repository -ne 'baisuipingan/ZCode' -or
-              $manifest.releaseTag -ne 'milocode-v3.17.7' -or
-              $manifest.assetName -ne 'MiloCode-3.17.7-win-x64.exe') {
-            throw 'The final installer source must remain the fixed 3.17.7 release asset.'
+              $manifest.releaseTag -ne 'milocode-v3.17.8' -or
+              $manifest.assetName -ne 'MiloCode-3.17.8-win-x64.exe') {
+            throw 'The final installer source must remain the fixed 3.17.8 release asset.'
           }
           New-Item -ItemType Directory -Path $env:ACCEPTANCE_ROOT -Force | Out-Null
           gh release download $manifest.releaseTag --repo $manifest.repository --pattern $manifest.assetName --dir $env:ACCEPTANCE_ROOT
@@ -75,7 +75,7 @@ jobs:
           ACCEPTANCE_SHA256: ${{ inputs.sha256 }}
         run: |
           ./scripts/windows-installer-acceptance.ps1 `
-            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.7-win-x64.exe') `
+            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.8-win-x64.exe') `
             -Sha256 $env:ACCEPTANCE_SHA256 `
             -WorkRoot (Join-Path $env:ACCEPTANCE_ROOT 'run')
 
@@ -83,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: milocode-3.17.7-windows-final-acceptance-${{ github.run_id }}
+          name: milocode-3.17.8-windows-final-acceptance-${{ github.run_id }}
           path: ${{ env.ACCEPTANCE_ROOT }}/run/evidence/
           if-no-files-found: warn
           retention-days: 14

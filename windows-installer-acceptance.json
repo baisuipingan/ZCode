@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "repository": "baisuipingan/ZCode",
-  "releaseTag": "milocode-v3.17.7",
-  "version": "3.17.7",
-  "assetName": "MiloCode-3.17.7-win-x64.exe",
-  "sha256": "d3f395755eae5849b69b0245df9e4b8eb6b938a70364c925ed52503b6dfdef40"
+  "releaseTag": "milocode-v3.17.8",
+  "version": "3.17.8",
+  "assetName": "MiloCode-3.17.8-win-x64.exe",
+  "sha256": "9e067ba0e6d936e08122470cc75ffd5897235004fe312e1ef181f119db917880"
 }
