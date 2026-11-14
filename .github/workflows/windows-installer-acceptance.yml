@@ -1,0 +1,71 @@
+name: Windows final installer acceptance
+
+on:
+  push:
+    branches: [codex/desktop-managed-agent]
+    paths:
+      - .github/workflows/windows-installer-acceptance.yml
+      - scripts/windows-installer-acceptance.ps1
+      - windows-installer-acceptance.json
+  workflow_dispatch:
+    inputs:
+      sha256:
+        description: Final 3.17.4 EXE SHA256 (leave empty to use the tracked manifest)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-final-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  final-installer:
+    if: github.repository == 'baisuipingan/ZCode' && github.ref == 'refs/heads/codex/desktop-managed-agent'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ACCEPTANCE_ROOT: ${{ runner.temp }}\milocode-windows-acceptance
+    steps:
+      - name: Check out acceptance scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the final Draft Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content windows-installer-acceptance.json -Raw | ConvertFrom-Json
+          if ($manifest.repository -ne 'baisuipingan/ZCode' -or
+              $manifest.releaseTag -ne 'milocode-v3.17.4' -or
+              $manifest.assetName -ne 'MiloCode-3.17.4-win-x64.exe') {
+            throw 'The final installer source must remain the fixed 3.17.4 release asset.'
+          }
+          New-Item -ItemType Directory -Path $env:ACCEPTANCE_ROOT -Force | Out-Null
+          gh release download $manifest.releaseTag --repo $manifest.repository --pattern $manifest.assetName --dir $env:ACCEPTANCE_ROOT
+          if ($LASTEXITCODE -ne 0) { throw 'Downloading the final installer failed.' }
+
+      - name: Verify wizard, install, renderer and uninstall
+        env:
+          ACCEPTANCE_SHA256: ${{ inputs.sha256 }}
+        run: |
+          ./scripts/windows-installer-acceptance.ps1 `
+            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.4-win-x64.exe') `
+            -Sha256 $env:ACCEPTANCE_SHA256 `
+            -WorkRoot (Join-Path $env:ACCEPTANCE_ROOT 'run')
+
+      - name: Upload installer acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: milocode-3.17.4-windows-final-acceptance-${{ github.run_id }}
+          path: ${{ env.ACCEPTANCE_ROOT }}/run/evidence/
+          if-no-files-found: warn
+          retention-days: 14

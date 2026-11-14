@@ -1,0 +1,320 @@
+#requires -Version 7.4
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$InstallerPath,
+    [string]$Sha256 = '',
+    [string]$ManifestPath = (Join-Path $PSScriptRoot '..\windows-installer-acceptance.json'),
+    [string]$WorkRoot = (Join-Path $env:RUNNER_TEMP ('milocode-acceptance-' + [guid]::NewGuid().ToString('N')))
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+if (-not $IsWindows) { throw 'This acceptance script must run on Windows.' }
+if (-not $env:RUNNER_TEMP) { throw 'RUNNER_TEMP is required for an isolated acceptance run.' }
+$tempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+$WorkRoot = [IO.Path]::GetFullPath($WorkRoot)
+if (-not $WorkRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'WorkRoot must be a child of RUNNER_TEMP.'
+}
+if (Test-Path -LiteralPath $WorkRoot) { throw 'WorkRoot must not already exist; use a fresh directory.' }
+$evidence = Join-Path $WorkRoot 'evidence'
+$installDir = Join-Path $WorkRoot 'MiloCode'
+$profileDir = Join-Path $WorkRoot 'profile'
+New-Item -ItemType Directory -Path $evidence, $profileDir -Force | Out-Null
+$owned = @{}
+$stages = [Collections.Generic.List[object]]::new()
+$report = [ordered]@{
+    schemaVersion = 1; status = 'running'; startedAt = [DateTime]::UtcNow.ToString('o')
+    finishedAt = $null; error = $null; errorDetail = $null; cleanupError = $null; stages = $stages
+}
+$reportPath = Join-Path $evidence 'result.json'
+
+function Save-Report {
+    $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding utf8
+}
+function Record-Stage([string]$Name, [object]$Details) {
+    $stages.Add([ordered]@{ name = $Name; at = [DateTime]::UtcNow.ToString('o'); details = $Details })
+    Save-Report
+    Write-Host "[acceptance] $Name"
+}
+function Remember-Process([Diagnostics.Process]$Process) {
+    try { $owned[$Process.Id] = $Process.StartTime.ToUniversalTime().Ticks } catch { }
+}
+function Update-OwnedProcesses {
+    # 只从本次已记录的 PID 扩展后代；退出后 PID 被复用也不能误杀别的应用。
+    $rows = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId)
+    $liveOwners = @{}
+    foreach ($processId in @($owned.Keys)) {
+        try {
+            $process = Get-Process -Id $processId -ErrorAction Stop
+            if ($process.StartTime.ToUniversalTime().Ticks -eq $owned[$processId]) { $liveOwners[$processId] = $true }
+        } catch { }
+    }
+    do {
+        $added = $false
+        foreach ($row in $rows) {
+            $childId = [int]$row.ProcessId
+            if ($liveOwners.ContainsKey([int]$row.ParentProcessId) -and -not $owned.ContainsKey($childId)) {
+                try {
+                    $child = Get-Process -Id $childId -ErrorAction Stop
+                    if ($child.StartTime.ToUniversalTime().Ticks -ge $owned[[int]$row.ParentProcessId]) {
+                        Remember-Process $child
+                        $liveOwners[$childId] = $true
+                        $added = $true
+                    }
+                } catch { }
+            }
+        }
+    } while ($added)
+}
+function Stop-OwnedProcesses {
+    Update-OwnedProcesses
+    # 不按应用名筛选，不使用 taskkill /IM；逐一比对启动时间后才退出进程。
+    foreach ($processId in @($owned.Keys | Sort-Object { $owned[$_] } -Descending)) {
+        try {
+            $process = Get-Process -Id $processId -ErrorAction Stop
+            if ($process.StartTime.ToUniversalTime().Ticks -eq $owned[$processId]) {
+                Stop-Process -InputObject $process -Force -ErrorAction Stop
+                $process.WaitForExit(10000) | Out-Null
+            }
+        } catch [Microsoft.PowerShell.Commands.ProcessCommandException] { }
+    }
+    $owned.Clear()
+}
+function Start-OwnedProcess([string]$FilePath, [string[]]$Arguments, [hashtable]$Environment = @{}, [string]$RawArguments = '') {
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $FilePath
+    $start.UseShellExecute = $false
+    $start.WorkingDirectory = $WorkRoot
+    if ($RawArguments) { $start.Arguments = $RawArguments }
+    else { foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) } }
+    foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] }
+    $process = [Diagnostics.Process]::Start($start)
+    Remember-Process $process
+    return $process
+}
+function Wait-OwnedExit([Diagnostics.Process]$Process, [int]$Seconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while (-not $Process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        Update-OwnedProcesses
+        Start-Sleep -Milliseconds 400
+        $Process.Refresh()
+    }
+    if (-not $Process.HasExited) { throw "Process $($Process.Id) timed out after $Seconds seconds." }
+    $Process.WaitForExit()
+    if ($Process.ExitCode -ne 0) { throw "Process $($Process.Id) exited with code $($Process.ExitCode)." }
+    return $Process.ExitCode
+}
+function Invoke-Cdp([string]$SocketUrl, [string]$Method, [hashtable]$Parameters) {
+    $socketUri = [uri]$SocketUrl
+    if ($socketUri.Scheme -ne 'ws' -or $socketUri.Host -notin @('127.0.0.1', 'localhost', '[::1]')) {
+        throw 'Only loopback CDP sockets are allowed.'
+    }
+    $socket = [Net.WebSockets.ClientWebSocket]::new()
+    $cancel = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(15))
+    try {
+        $socket.ConnectAsync($socketUri, $cancel.Token).GetAwaiter().GetResult()
+        $message = @{ id = 1; method = $Method; params = $Parameters } | ConvertTo-Json -Depth 12 -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($message)
+        $socket.SendAsync([ArraySegment[byte]]::new($bytes), [Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
+        do {
+            $stream = [IO.MemoryStream]::new()
+            try {
+                do {
+                    $buffer = [byte[]]::new(65536)
+                    $received = $socket.ReceiveAsync([ArraySegment[byte]]::new($buffer), $cancel.Token).GetAwaiter().GetResult()
+                    if ($received.MessageType -eq [Net.WebSockets.WebSocketMessageType]::Close) { throw 'CDP socket closed before replying.' }
+                    $stream.Write($buffer, 0, $received.Count)
+                    if ($stream.Length -gt 16MB) { throw 'CDP reply exceeded the acceptance size limit.' }
+                } while (-not $received.EndOfMessage)
+                $reply = [Text.Encoding]::UTF8.GetString($stream.ToArray()) | ConvertFrom-Json -AsHashtable
+            } finally { $stream.Dispose() }
+        } while (-not $reply.ContainsKey('id') -or $reply.id -ne 1)
+        if ($reply.ContainsKey('error')) { throw "CDP failed: $($reply.error | ConvertTo-Json -Compress)" }
+        return $reply.result
+    } finally { $socket.Dispose(); $cancel.Dispose() }
+}
+
+Save-Report
+try {
+    $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.repository -ne 'baisuipingan/ZCode' -or
+        $manifest.releaseTag -ne 'milocode-v3.17.4' -or $manifest.version -ne '3.17.4' -or
+        $manifest.assetName -ne 'MiloCode-3.17.4-win-x64.exe') { throw 'Unexpected final release manifest.' }
+    $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
+    if ([IO.Path]::GetFileName($InstallerPath) -ne $manifest.assetName) { throw 'Installer filename differs from the final release asset.' }
+    $expectedHash = $(if ($Sha256) { $Sha256 } else { $manifest.sha256 }).Trim().ToLowerInvariant()
+    if ($expectedHash -notmatch '^[0-9a-f]{64}$') { throw 'A final SHA256 is required; the publisher must populate the manifest or dispatch input.' }
+    $actualHash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $expectedHash) { throw "Final installer SHA256 mismatch: $actualHash" }
+    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($InstallerPath)
+    if ($version.ProductVersion -notmatch '^3\.17\.4(?:\.0)?$' -or $version.ProductName -ne 'MiloCode') {
+        throw "Unexpected installer identity: $($version.ProductName) $($version.ProductVersion)"
+    }
+    Record-Stage 'asset-verified' @{ sha256 = $actualHash; bytes = (Get-Item -LiteralPath $InstallerPath).Length; version = $version.ProductVersion }
+
+    Add-Type -AssemblyName System.Drawing
+    # 读取本次向导的 Win32 控件，不依赖 runner 额外安装 UI Automation 或浏览器驱动。
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class MiloInstallerWindowProbe {
+    public struct Rect { public int Left, Top, Right, Bottom; }
+    private delegate bool EnumWindowProc(IntPtr handle, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr handle, out Rect rect);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr handle, EnumWindowProc callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr handle, StringBuilder buffer, int length);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr handle, StringBuilder buffer, int length);
+    public static string[] ReadButtons(IntPtr handle) {
+        var result = new List<string>();
+        EnumChildWindows(handle, (child, unused) => {
+            var kind = new StringBuilder(128);
+            var text = new StringBuilder(1024);
+            GetClassName(child, kind, kind.Capacity);
+            if (kind.ToString() == "Button" && IsWindowVisible(child)) {
+                GetWindowText(child, text, text.Capacity);
+                result.Add(text.ToString());
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result.ToArray();
+    }
+}
+'@
+    $wizard = Start-OwnedProcess $InstallerPath @('/currentuser')
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $window = $null
+    while (-not $window -and [DateTime]::UtcNow -lt $deadline) {
+        Update-OwnedProcesses
+        foreach ($processId in @($owned.Keys)) {
+            $candidate = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($candidate -and $candidate.MainWindowHandle -ne [IntPtr]::Zero) {
+                if ($candidate.MainWindowTitle -match 'MiloCode' -and [MiloInstallerWindowProbe]::IsWindowVisible($candidate.MainWindowHandle)) {
+                    $window = $candidate
+                    break
+                }
+            }
+        }
+        if (-not $window) { Start-Sleep -Milliseconds 300 }
+    }
+    if (-not $window) { throw 'No visible MiloCode installer wizard appeared.' }
+    $buttonNames = @([MiloInstallerWindowProbe]::ReadButtons($window.MainWindowHandle))
+    if ($buttonNames.Count -lt 2 -or -not ($buttonNames -match '(?i)(next|install|下一步|安装)')) {
+        throw 'Installer window did not expose normal Next/Install wizard controls.'
+    }
+    $rect = [MiloInstallerWindowProbe+Rect]::new()
+    if (-not [MiloInstallerWindowProbe]::GetWindowRect($window.MainWindowHandle, [ref]$rect)) { throw 'Cannot read installer wizard bounds.' }
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    if ($width -lt 200 -or $height -lt 100) { throw 'Installer wizard has an invalid window size.' }
+    $bitmap = [Drawing.Bitmap]::new($width, $height)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+        $bitmap.Save((Join-Path $evidence 'installer-wizard.png'), [Drawing.Imaging.ImageFormat]::Png)
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    Record-Stage 'wizard-visible' @{ title = $window.MainWindowTitle; buttons = $buttonNames; width = $width; height = $height }
+    Stop-OwnedProcesses
+
+    # NSIS 官方规则要求 /D 最后且不能带引号，即使路径有空格；此处不使用会自动加引号的 ArgumentList。
+    $installer = Start-OwnedProcess -FilePath $InstallerPath -Arguments @() -RawArguments "/S /currentuser /D=$installDir"
+    $installExit = Wait-OwnedExit $installer 240
+    $appPath = Join-Path $installDir 'MiloCode.exe'
+    if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) { throw 'The installed MiloCode.exe is missing.' }
+    $uninstallers = @(Get-ChildItem -LiteralPath $installDir -Filter '*Uninstall*.exe' -File)
+    if ($uninstallers.Count -ne 1) { throw 'Expected exactly one installed uninstaller.' }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcutRows = @()
+    foreach ($shortcutRoot in @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))) {
+        foreach ($link in @(Get-ChildItem -LiteralPath $shortcutRoot -Filter '*MiloCode*.lnk' -File -Recurse -ErrorAction SilentlyContinue)) {
+            $target = $shell.CreateShortcut($link.FullName).TargetPath
+            if ($target -eq $appPath) { $shortcutRows += @{ path = $link.FullName; target = $target } }
+        }
+    }
+    if ($shortcutRows.Count -lt 1) { throw 'No current-user shortcut points to this installed application.' }
+    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+    Record-Stage 'installed' @{ exitCode = $installExit; application = $appPath; uninstaller = $uninstallers[0].Name; shortcuts = $shortcutRows }
+
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = $listener.LocalEndpoint.Port
+    $listener.Stop()
+    $runtimeEnv = @{
+        ZCODE_DESKTOP_USER_DATA_DIR = (Join-Path $profileDir 'user-data')
+        ZCODE_DESKTOP_SESSION_DATA_DIR = (Join-Path $profileDir 'session-data')
+        ZCODE_DESKTOP_HOME_DIR = (Join-Path $profileDir 'home')
+        ZCODE_DATA_BASE_DIR = (Join-Path $profileDir 'data')
+        ZCODE_HOME = (Join-Path $profileDir 'data\.zcode')
+        ZCODE_DESKTOP_APPLICATION_NAME = 'MiloCode Installer Acceptance'
+    }
+    foreach ($directory in $runtimeEnv.Values) {
+        if ($directory.StartsWith($profileDir, [StringComparison]::OrdinalIgnoreCase)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    }
+    $app = Start-OwnedProcess $appPath @("--remote-debugging-port=$port", '--remote-debugging-address=127.0.0.1', "--user-data-dir=$($runtimeEnv.ZCODE_DESKTOP_USER_DATA_DIR)") $runtimeEnv
+    $deadline = [DateTime]::UtcNow.AddSeconds(120)
+    $ready = $null
+    $pageSocket = $null
+    $lastProbeError = ''
+    $expression = @'
+(() => {
+  const root = document.querySelector('#root');
+  return {
+    state: document.readyState,
+    title: document.title,
+    url: location.href,
+    rootChildren: root?.childElementCount ?? 0,
+    textLength: root?.innerText?.trim().length ?? 0,
+    controls: root?.querySelectorAll('button,input,[role="button"]').length ?? 0
+  };
+})()
+'@
+    while (-not $ready -and [DateTime]::UtcNow -lt $deadline) {
+        Update-OwnedProcesses
+        try {
+            $pages = @(Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/list" -TimeoutSec 3)
+            foreach ($page in $pages) {
+                if ($page.type -ne 'page' -or -not $page.webSocketDebuggerUrl) { continue }
+                $evaluation = Invoke-Cdp $page.webSocketDebuggerUrl 'Runtime.evaluate' @{ expression = $expression; returnByValue = $true }
+                if ($evaluation.ContainsKey('exceptionDetails')) { throw 'Renderer readiness probe threw an exception.' }
+                $value = $evaluation.result.value
+                if ($value.state -eq 'complete' -and $value.title -match 'MiloCode' -and
+                    $value.rootChildren -gt 0 -and $value.textLength -gt 10 -and $value.controls -gt 0) {
+                    $ready = $value
+                    $pageSocket = $page.webSocketDebuggerUrl
+                    break
+                }
+            }
+        } catch { $lastProbeError = $_.Exception.Message }
+        if (-not $ready) { Start-Sleep -Milliseconds 700 }
+    }
+    if (-not $ready) { throw "Installed application renderer did not become ready. Last probe: $lastProbeError" }
+    $shot = Invoke-Cdp $pageSocket 'Page.captureScreenshot' @{ format = 'png'; captureBeyondViewport = $false }
+    [IO.File]::WriteAllBytes((Join-Path $evidence 'installed-renderer.png'), [Convert]::FromBase64String($shot.data))
+    Record-Stage 'renderer-ready' $ready
+    Stop-OwnedProcesses
+
+    $uninstaller = Start-OwnedProcess -FilePath $uninstallers[0].FullName -Arguments @() -RawArguments "/S /currentuser _?=$installDir"
+    $uninstallExit = Wait-OwnedExit $uninstaller 120
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    while ((Test-Path -LiteralPath $appPath) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 300 }
+    if (Test-Path -LiteralPath $appPath) { throw 'MiloCode.exe remains after uninstall.' }
+    foreach ($shortcut in $shortcutRows) {
+        if (Test-Path -LiteralPath $shortcut.path) { throw "Installed shortcut remains after uninstall: $($shortcut.path)" }
+    }
+    Record-Stage 'uninstalled' @{ exitCode = $uninstallExit; applicationRemoved = $true; shortcutsRemoved = $true }
+    $report.status = 'passed'
+} catch {
+    $report.status = 'failed'
+    $report.error = $_.Exception.Message
+    $report.errorDetail = $_.ToString()
+    Write-Error -Message $_.Exception.Message -ErrorAction Continue
+} finally {
+    try { Stop-OwnedProcesses } catch { $report.cleanupError = $_.Exception.Message; $report.status = 'failed' }
+    $report.finishedAt = [DateTime]::UtcNow.ToString('o')
+    Save-Report
+}
+if ($report.status -ne 'passed') { exit 1 }
+Write-Host "Final Windows installer acceptance passed. Evidence: $evidence"

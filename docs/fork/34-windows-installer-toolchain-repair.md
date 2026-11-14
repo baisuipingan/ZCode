@@ -59,3 +59,4 @@ NSIS 3.12 统一套装包含内置和扩展插件。Builder 先 include `install
 - 仅操纵由本次脚本启动且启动时间相符的进程及其后代，绝不按通用 `MiloCode`/`Electron` 名称全局杀进程。向导检查后终止本次尚未安装的进程树；静默安装、应用、卸载分别记录退出/阶段。
 - CDP 只监听 loopback，随机端口。读取页面及截图，不登录用户、不调用模型、不构造生产数据。无窗口、页面崩溃、空白 root、超时和卸载不完整均失败；诊断产物使用 `always()` 上传。
 - 自动验收覆盖 Windows runner 上的最终包可运行性，不代替真实用户机器的 SmartScreen 声誉、不同 DPI/语言和人工审美验收。未实际运行时只报告静态检查通过，不能报告安装通过。
+- 本机验证：官方 PowerShell 7.4.6（归档 SHA256 校验通过）Parser 无语法错误，Win32 窗口探针 C# 编译通过；使用本地 WebSocket fixture 验证 CDP 异步通信、事件过滤和超过 64 KiB 的响应重组。工作流 YAML、manifest JSON、架构和 diff 检查通过。此记录不代表 Windows 安装/启动已通过，需以后续 workflow 结果为准。
