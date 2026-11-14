@@ -13,12 +13,23 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const build = join(root, "packages/desktop/build");
 const source = await readFile(
   join(build, "branding/milocode-dmg-background.svg"),
+  "utf8",
 );
-const image = await loadImage(source);
-if (image.width !== 540 || image.height !== 380)
-  throw new Error("DMG background must be 540×380");
+if (!source.includes('width="540" height="380" viewBox="0 0 540 380"'))
+  throw new Error(
+    "DMG background must be 540×380 with a matching vector viewBox",
+  );
 const outputs = [];
 for (const scale of [1, 2]) {
+  // HiDPI 直接以双倍尺寸栅格化矢量，不能放大已栅格化的 1x 图片。
+  const image = await loadImage(
+    Buffer.from(
+      source.replace(
+        'width="540" height="380"',
+        `width="${540 * scale}" height="${380 * scale}"`,
+      ),
+    ),
+  );
   const canvas = createCanvas(540 * scale, 380 * scale);
   canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
   const bytes = await canvas.encode("png");
