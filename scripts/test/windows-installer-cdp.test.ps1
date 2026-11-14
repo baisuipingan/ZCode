@@ -89,3 +89,61 @@ if ($SocketUrl) {
     Assert-CdpResult $values 'Real loopback WebSocket'
     Write-Host 'PASS: real loopback WebSocket returns one complete Hashtable.'
 }
+
+foreach ($name in @('Test-MainRendererTarget', 'Read-RendererProbe', 'Read-PaintedRendererProbe', 'Test-RendererLoginReady')) {
+    $functionAst = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if (-not $functionAst) { throw "Acceptance function was not found: $name" }
+    Invoke-Expression $functionAst.Extent.Text
+}
+$main = [pscustomobject]@{ id = 'main'; type = 'page'; title = 'MiloCode'; url = 'file:///D:/MiloCode/resources/app.asar/out/renderer/index.html?restoreSession=true' }
+$update = [pscustomobject]@{ id = 'update'; type = 'page'; title = 'MiloCode'; url = 'file:///D:/MiloCode/resources/app.asar/out/renderer/index.html?windowKind=update-status' }
+foreach ($fixture in @(@{ targets = @($main) }, @{ targets = @($main, $update) })) {
+    # 模拟 Invoke-RestMethod 的 NoEnumerate 数组返回，正式表达式必须得到逐个 target。
+    $pages = @(Write-Output -NoEnumerate $fixture.targets | ForEach-Object { $_ })
+    if ($pages.Count -ne $fixture.targets.Count -or @($pages | Select-Object id)[0].id -ne 'main') { throw 'CDP target array was not flattened.' }
+    $mainPages = @($pages | Where-Object { Test-MainRendererTarget $_ })
+    if ($mainPages.Count -ne 1 -or $mainPages[0].id -ne 'main') { throw 'The update-status page was admitted as a main renderer.' }
+}
+if (Test-MainRendererTarget ([pscustomobject]@{ type = 'page'; url = 'https://example.invalid/out/renderer/index.html' })) {
+    throw 'A remote page was admitted as a packaged main renderer.'
+}
+
+$readyProbe = @{
+    state = 'complete'; title = 'MiloCode'; rootChildren = 1; textLength = 100; controls = 1
+    staticLoadingPresent = $false; startupLoadingPresent = $false
+    loginVisible = $true; loginEnabled = $true; loginInViewport = $true; loginClickable = $true
+    visibleErrors = @()
+}
+$waitingProbe = $readyProbe.Clone(); $waitingProbe.startupLoadingPresent = $true; $waitingProbe.loginClickable = $false
+$script:rendererReplies = [Collections.Generic.Queue[object]]::new()
+foreach ($reply in @($waitingProbe, $readyProbe, $readyProbe, $readyProbe)) { $script:rendererReplies.Enqueue($reply) }
+$script:rendererCalls = [Collections.Generic.List[string]]::new()
+function Invoke-Cdp([string]$SocketUrl, [string]$Method, [hashtable]$Parameters) {
+    if ($SocketUrl -ne 'ws://127.0.0.1:2') { throw 'Paint probe changed its current target.' }
+    $script:rendererCalls.Add($Method)
+    if ($Method -eq 'Runtime.evaluate') { return @{ result = @{ value = $script:rendererReplies.Dequeue() } } }
+    if ($Method -eq 'Page.captureScreenshot') { return @{ data = [Convert]::ToBase64String([byte[]](1, 2, 3)) } }
+    if ($Method -eq 'Page.bringToFront') { return @{} }
+    throw "Unexpected paint probe request: $Method"
+}
+$fixtureDir = Join-Path ([IO.Path]::GetTempPath()) ('milocode-renderer-probe-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $fixtureDir | Out-Null
+try {
+    $null = Invoke-Cdp 'ws://127.0.0.1:2' 'Page.bringToFront' @{}
+    $first = Read-PaintedRendererProbe 'ws://127.0.0.1:2' 'fixture' (Join-Path $fixtureDir 'renderer-latest.png')
+    $final = Read-PaintedRendererProbe 'ws://127.0.0.1:2' 'fixture' (Join-Path $fixtureDir 'installed-renderer.png')
+    if ((Test-RendererLoginReady $first.before) -or -not (Test-RendererLoginReady $first.after) -or
+        -not (Test-RendererLoginReady $final.before) -or -not (Test-RendererLoginReady $final.after)) {
+        throw 'Paint probes lost the waiting-to-login transition or final strict readiness.'
+    }
+    $expected = 'Page.bringToFront,Runtime.evaluate,Page.captureScreenshot,Runtime.evaluate,Runtime.evaluate,Page.captureScreenshot,Runtime.evaluate'
+    if (($script:rendererCalls -join ',') -ne $expected -or $script:rendererReplies.Count -ne 0) { throw 'Paint probe call order or distinct replies were incorrect.' }
+    foreach ($name in @('renderer-latest.png', 'installed-renderer.png')) {
+        if ([IO.File]::ReadAllBytes((Join-Path $fixtureDir $name)).Length -ne 3) { throw 'Paint screenshot was not saved.' }
+    }
+    foreach ($key in @('staticLoadingPresent', 'startupLoadingPresent', 'loginVisible', 'loginEnabled', 'loginInViewport', 'loginClickable')) {
+        $blocked = $readyProbe.Clone(); $blocked[$key] = -not $blocked[$key]
+        if (Test-RendererLoginReady $blocked) { throw "Strict readiness gate was weakened for $key." }
+    }
+} finally { Remove-Item -LiteralPath $fixtureDir -Recurse -Force }
+Write-Host 'PASS: single/multiple targets, main-page isolation, distinct paint replies, screenshot order and unchanged strict login gates.'

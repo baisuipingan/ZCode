@@ -87,3 +87,9 @@ Windows run `43566965611` 通过摘要、向导和安装，但严格登录门禁
 ```
 
 超时前将以上事实写入 `renderer-last-probe.json`，并通过末次有效 loopback 页面 socket 尝试保存 `renderer-failed.png`；截图或诊断写入失败只能追加诊断错误，不能掩盖原门禁失败。正常就绪条件、安装与卸载检查、App 和最终安装包字节均不变。
+
+## 可见帧与 DOM 的验收取样顺序
+
+Run `43567887861` 末次 DOM 仍报告 `starting_services / Finishing startup`，但紧随其后的失败截图已显示完整品牌登录页。因此该轮证明安装后应用能绘制登录页，不能只依据截图前的旧 DOM 判定 App 卡死。尚未确认是 runner 的可见帧提交还是探针连接时序造成；下一轮只调整验收的取样顺序，不修改 App 或延长 120 秒等待。
+
+对 CDP `/json/list` 返回值先显式展平，确保单目标和多目标均按页面逐个处理，并记录真实 `id/type/title/url`。只验收本地 `out/renderer/index.html` 且非 `windowKind=update-status` 的主页面。每个新主目标先执行一次 `Page.bringToFront`；每轮按「绘制前 DOM → 截图并覆盖同一 `renderer-latest.png` → 绘制后 DOM」顺序取样，并将同一目标、时间和前后探针一起记录。只有绘制后的原严格登录条件满足才放行；放行前再次截图并按相同条件复核，保证交付的 `installed-renderer.png` 与报告均来自真正登录态。截图/探针失败、遮罩存在或登录按钮不可点击仍失败，不增加 fallback 或变更业务门槛。
