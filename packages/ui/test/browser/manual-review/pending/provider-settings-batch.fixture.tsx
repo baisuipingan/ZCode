@@ -28,6 +28,10 @@ import { OffPeakEligibilityFixture } from "./offpeak-eligibility.fixture.js";
 import { OffPeakTeamEntryFixture } from "./offpeak-team-entry.fixture.js";
 import "@/styles.css";
 import { Checkbox } from "@/components/ui/checkbox.js";
+import type { AppSettings, IPlatformService } from "@zcode/shared";
+import { ZCODE_CUA_OFFICIAL_PLUGIN_ID } from "@zcode/shared";
+import { PlatformProvider } from "@/hooks/usePlatform.js";
+import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.className =
@@ -247,6 +251,78 @@ function Fixture() {
     </main>
   );
 }
+
+// 复用设置页浏览器验收入口。真实 Settings/Hook/插件 store，只替换只读状态与写入 RPC。
+let cuaEnabled = params.get("cuaEnabled") !== "false";
+let cuaSettings = { computerUseComposerEntryHidden: true } as AppSettings;
+async function cuaRpc(action: string, payload: unknown = {}) {
+  const response = await fetch("/cua-rpc", {
+    method: "POST",
+    body: JSON.stringify({ action, payload }),
+  });
+  if (!response.ok) throw new Error("controlled Computer Use RPC failure");
+  return response.json();
+}
+const cuaServices = {
+  settingService: {
+    get: async () => cuaSettings,
+    update: async (patch: Partial<AppSettings>) => {
+      await cuaRpc("settings", patch);
+      cuaSettings = { ...cuaSettings, ...patch };
+    },
+  },
+  pluginManagementService: {
+    listPlugins: async () => ({
+      plugins: [{ id: ZCODE_CUA_OFFICIAL_PLUGIN_ID, enabled: cuaEnabled }],
+      diagnostics: [],
+    }),
+    getPluginsOverview: async () => ({
+      marketplaces: [],
+      availablePlugins: [],
+      installedPlugins: [],
+      restorableBuiltins: [],
+      diagnostics: [],
+    }),
+    setPluginEnabled: async (payload: { enabled: boolean }) => {
+      await cuaRpc("toggle", payload);
+      cuaEnabled = payload.enabled;
+      return { enabled: cuaEnabled };
+    },
+  },
+  cuaPermissionService: {
+    getStatus: async (
+      workspacePath: string,
+      workspaceIdentity: string | undefined,
+      options: unknown,
+    ) => cuaRpc("status", { workspacePath, workspaceIdentity, options }),
+    restartHelper: async () => cuaRpc("forbidden-restart"),
+  },
+} as unknown as IServiceAccessor;
+const cuaPlatform = {
+  openCuaPermissionOnboarding: async (options: unknown) => {
+    await cuaRpc("open-permission", options);
+    return { success: true };
+  },
+  executeDesktopCommand: async () => ({ kind: "supported" }),
+} as unknown as IPlatformService;
+function ComputerUseFixture() {
+  const target = params.get("computerUse");
+  return (
+    <ServiceProvider services={cuaServices}>
+      <PlatformProvider platform={cuaPlatform}>
+        <main className="min-h-screen bg-background p-4 text-foreground">
+          <ComputerUseSection
+            isDesktop={target !== "web"}
+            isMacDesktop={target === "mac" || target === "remote"}
+            isWindowsDesktop={target === "windows"}
+            workspacePath="/fixture/workspace"
+            {...(target === "remote" ? { remoteSessionId: "remote-fixture" } : {})}
+          />
+        </main>
+      </PlatformProvider>
+    </ServiceProvider>
+  );
+}
 createRoot(document.getElementById("root")!).render(
   <ServiceProvider
     services={
@@ -263,7 +339,9 @@ createRoot(document.getElementById("root")!).render(
   >
     <TooltipProvider>
       <ZCodeIntlProvider initialLocale={params.get("locale") === "zh-CN" ? "zh-CN" : "en-US"}>
-        {params.has("teamEntry") ? (
+        {params.has("computerUse") ? (
+          <ComputerUseFixture />
+        ) : params.has("teamEntry") ? (
           <OffPeakTeamEntryFixture />
         ) : params.has("offpeak") ? (
           <OffPeakEligibilityFixture />

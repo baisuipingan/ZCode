@@ -15,6 +15,7 @@ import {
   type NodeReplRunResult,
 } from "@zcode/core/repl";
 import { createComputerUseRuntime, type ComputerUseRuntime } from "@zcode/zcode-cua";
+import { isRemoteWorkspaceIdentity } from "@zcode/shared/remote-workspace-identity";
 // 只加载 broker 协议常量；shared 总入口会初始化无关领域的 schema。
 import {
   NODE_REPL_BROWSER_BROKER_SOCKET_ENV,
@@ -109,7 +110,7 @@ export interface NodeReplExecuteInput {
 export type NodeReplExecutor = (input: NodeReplExecuteInput) => Promise<NodeReplRunResult>;
 
 export interface NodeReplMcpRuntime {
-  dispose(): void;
+  dispose(): Promise<void>;
   server: Server;
 }
 
@@ -211,6 +212,7 @@ export function createNodeReplMcpRuntime(
   const queues = new Map<string, Promise<void>>();
   const activeCalls = new Set<AbortController>();
   let disposed = false;
+  let disposal: Promise<void> | undefined;
 
   const serialized = async <T>(key: string, run: () => Promise<T>): Promise<T> => {
     const previous = queues.get(key) ?? Promise.resolve();
@@ -242,6 +244,7 @@ export function createNodeReplMcpRuntime(
     if (name === "js") {
       const args = parseToolInput(jsInputSchema, request.params.arguments, name);
       return await serialized(sessionKey, async () => {
+        if (disposed) throw new Error("node_repl runtime is disposed");
         if (!args.code) {
           return {
             content: [{ type: "text" as const, text: "js expects non-empty JavaScript source" }],
@@ -298,13 +301,19 @@ export function createNodeReplMcpRuntime(
   return {
     server,
     dispose: () => {
+      if (disposal) return disposal;
       disposed = true;
       for (const controller of activeCalls) controller.abort();
       activeCalls.clear();
       queues.clear();
-      void cuaBroker?.close();
-      void browserBrokerProxy?.close();
-      void cuaRuntime?.dispose();
+      // 原实现 fire-and-forget 后立刻退出，detached 原生进程还没被回收。
+      // 关闭完成是进程退出屏障；同一实例重复 dispose 共享这一份清理结果。
+      disposal = Promise.all([
+        cuaBroker?.close(),
+        browserBrokerProxy?.close(),
+        cuaRuntime?.dispose(),
+      ]).then(() => undefined);
+      return disposal;
     },
   };
 }
@@ -413,9 +422,8 @@ export async function main(): Promise<void> {
   const shutdown = () => {
     if (shutdownStarted) return;
     shutdownStarted = true;
-    for (const runtime of runtimes) runtime.dispose();
-    void handle
-      .close()
+    void Promise.all([...runtimes].map((runtime) => runtime.dispose()))
+      .then(() => handle.close())
       .catch(() => undefined)
       .finally(() => process.exit(0));
   };
@@ -453,11 +461,18 @@ if (!isMainThread && isWorkerCallData(workerData)) {
 export function captureComputerUseRuntimeFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): ComputerUseRuntime | undefined {
+  // 新执行器没有旧私有 socket；仍须由 bootstrap 的官方插件 registry 显式授予，
+  // 仅继承 binary 路径不能让普通 node_repl 或已关闭的插件获得电脑控制能力。
+  if (env.ZCODE_CUA_NODE_REPL_HOST === "1" && env.MILOCODE_AGENT_DESKTOP_BINARY?.trim()) {
+    return createComputerUseRuntime({ env, isRemoteWorkspaceIdentity });
+  }
   const socketPath = env.ZCODE_CUA_PERMISSION_BROKER_SOCKET?.trim();
   if (!socketPath) return undefined;
   return createComputerUseRuntime({
     brokerSocketPath: socketPath,
     refreshMarkerPath: env.ZCODE_CUA_PERMISSION_BROKER_REFRESH_MARKER?.trim(),
+    env,
+    isRemoteWorkspaceIdentity,
   });
 }
 

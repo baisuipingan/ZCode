@@ -33,7 +33,7 @@ interface StorageLike {
 }
 
 /** TCC 授权是 App（Helper bundle）级而非 workspace 级，因此全局单键，不按 workspace 分。 */
-export const CUA_PERMISSION_STATUS_CACHE_KEY = "zcode-cua-permission-status";
+export const CUA_PERMISSION_STATUS_CACHE_KEY = "milocode-agent-desktop-permission-status-v1";
 
 /**
  * 缓存有效期。授权状态可能在 ZCode 未运行时被用户在系统设置里改掉，缓存越旧越不可信；
@@ -41,12 +41,7 @@ export const CUA_PERMISSION_STATUS_CACHE_KEY = "zcode-cua-permission-status";
  */
 export const CUA_PERMISSION_STATUS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-const PERMISSION_STATES: readonly CuaPermissionState[] = [
-  "granted",
-  "stale",
-  "denied",
-  "unknown",
-];
+const PERMISSION_STATES: readonly CuaPermissionState[] = ["granted", "stale", "denied", "unknown"];
 
 interface CachedEnvelope {
   savedAt: number;
@@ -74,7 +69,8 @@ function parseCachedStatus(value: unknown): CuaPermissionStatus | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
   if (
-    typeof candidate.grantOwner !== "string" ||
+    (typeof candidate.grantOwner !== "string" && candidate.grantOwner !== null) ||
+    candidate.provider !== "agent-desktop" ||
     !isPermissionState(candidate.accessibility) ||
     !isPermissionState(candidate.screenRecording) ||
     typeof candidate.accessibilityProbeOk !== "boolean" ||
@@ -90,12 +86,15 @@ function parseCachedStatus(value: unknown): CuaPermissionStatus | null {
   }
 
   const parsed: CuaPermissionStatus = {
+    available: true,
+    provider: "agent-desktop",
     grantOwner: candidate.grantOwner,
     accessibility: candidate.accessibility,
     accessibilityProbeOk: candidate.accessibilityProbeOk,
     screenRecording: candidate.screenRecording,
     screenCaptureProbeOk: candidate.screenCaptureProbeOk,
   };
+  if (typeof candidate.binaryPath === "string") parsed.binaryPath = candidate.binaryPath;
   if (typeof candidate.grantOwnerDisplayName === "string") {
     parsed.grantOwnerDisplayName = candidate.grantOwnerDisplayName;
   }

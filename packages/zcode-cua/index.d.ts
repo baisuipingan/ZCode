@@ -32,6 +32,7 @@ export interface ComputerUseRuntimeOptions {
   refreshMarkerPath?: string;
   ensureBrokerAvailable?: () => Promise<void>;
   env?: Record<string, string | undefined>;
+  isRemoteWorkspaceIdentity?: (identity: string) => boolean;
 }
 
 export declare function createComputerUseRuntime(

@@ -1,4 +1,8 @@
-import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ComputerUseRuntime } from "@zcode/zcode-cua";
@@ -25,10 +29,16 @@ const fullRequestMeta = {
 
 describe("node_repl CUA bridge", () => {
   let broker: NodeReplCuaBroker | undefined;
+  const responseServers: Server[] = [];
 
   afterEach(async () => {
     await broker?.close();
     broker = undefined;
+    await Promise.all(
+      responseServers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
   });
 
   async function startBroker(
@@ -50,11 +60,12 @@ describe("node_repl CUA bridge", () => {
   }
 
   function bridgeFor(
-    started: { broker: NodeReplCuaBroker },
+    started: { broker: Pick<NodeReplCuaBroker, "connection"> },
     token: string,
     requestMeta: Record<string, unknown> = fullRequestMeta,
+    signal = new AbortController().signal,
   ) {
-    const active = { generation: 1, requestMeta, signal: new AbortController().signal };
+    const active = { generation: 1, requestMeta, signal };
     const globals = createComputerUseBridgeGlobals({
       broker: { socketPath: started.broker.connection.socketPath, token },
       documentationRoot: "/tmp/docs",
@@ -67,19 +78,185 @@ describe("node_repl CUA bridge", () => {
     };
   }
 
+  /** 用真实 socket 把中文和 emoji 的 UTF-8 字节拆开，避免只验证已解码的字符串。 */
+  async function writeUtf8Fragments(socket: Socket, text: string): Promise<void> {
+    const bytes = Buffer.from(text);
+    const boundaries = [bytes.indexOf(Buffer.from("中")) + 1, bytes.indexOf(Buffer.from("😀")) + 2];
+    expect(boundaries[0]).toBeGreaterThan(0);
+    expect(boundaries[1]).toBeGreaterThan(boundaries[0]!);
+    let offset = 0;
+    for (const boundary of [...boundaries, bytes.length]) {
+      socket.write(bytes.subarray(offset, boundary));
+      offset = boundary;
+      // 让前一段进入对端事件循环，防止内核合并写入掩盖多字节字符被拆分的回归。
+      if (offset < bytes.length) await delay(20);
+    }
+  }
+
+  async function startResponseServer(
+    respond: (socket: Socket, request: { id: string }) => void | Promise<void>,
+  ) {
+    const socketPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\zcode-cua-test-${randomUUID()}`
+        : join(tmpdir(), `znrt-${randomUUID()}.sock`);
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8");
+      socket.on("error", () => undefined);
+      let buffer = "";
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffer.slice(0, newline)) as { id: string };
+        void Promise.resolve(respond(socket, request)).catch(() => socket.destroy());
+      });
+    });
+    responseServers.push(server);
+    server.listen(socketPath);
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    return { broker: { connection: { socketPath } } };
+  }
+
   /** 绕过 bridge，直接往 broker 的 socket 发一行请求。 */
-  async function sendRaw(socketPath: string, request: Record<string, unknown>): Promise<string> {
+  async function sendRaw(
+    socketPath: string,
+    request: Record<string, unknown>,
+    splitUtf8 = false,
+  ): Promise<string> {
     return await new Promise<string>((resolve) => {
       const socket = createConnection(socketPath);
+      socket.setEncoding("utf8");
       let buffer = "";
-      socket.once("connect", () => socket.end(`${JSON.stringify(request)}\n`));
-      socket.on("data", (chunk) => {
-        buffer += chunk.toString("utf8");
-        if (buffer.includes("\n")) resolve(buffer.trim());
+      socket.once("connect", () => {
+        const frame = `${JSON.stringify(request)}\n`;
+        if (splitUtf8) void writeUtf8Fragments(socket, frame);
+        else socket.write(frame);
+      });
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        if (buffer.includes("\n")) {
+          socket.destroy();
+          resolve(buffer.trim());
+        }
       });
       socket.once("error", () => resolve(buffer.trim()));
     });
   }
+
+  it("preserves UTF-8 input split inside Chinese and emoji bytes", async () => {
+    const calls: unknown[] = [];
+    const started = await startBroker(async (input) => {
+      calls.push(input.arguments);
+      return { content: [{ type: "text", text: "ok" }] };
+    });
+    const call = started.ledger.open(fullRequestMeta);
+    const arguments_ = { name: "desktop_type", arguments: { text: "中文 😀" } };
+
+    const response = await sendRaw(
+      started.broker.connection.socketPath,
+      { id: "utf8-input", token: call.token, method: "desktop_call", input: arguments_ },
+      true,
+    );
+
+    expect(JSON.parse(response)).toMatchObject({ ok: true });
+    expect(calls).toEqual([arguments_]);
+  });
+
+  it("keeps the request limit in UTF-8 bytes rather than character count", async () => {
+    let executed = false;
+    const started = await startBroker(async () => {
+      executed = true;
+      return { content: [] };
+    });
+    const call = started.ledger.open(fullRequestMeta);
+    const response = await sendRaw(started.broker.connection.socketPath, {
+      id: "utf8-size",
+      token: call.token,
+      method: "desktop_call",
+      input: { text: "中".repeat(350_000) },
+    });
+
+    expect(JSON.parse(response)).toMatchObject({
+      ok: false,
+      error: "Computer Use broker request exceeded 1 MiB",
+      possibly_sent: false,
+    });
+    expect(executed).toBe(false);
+  });
+
+  it("preserves UTF-8 responses split inside Chinese and emoji bytes", async () => {
+    const result: CallToolResult = {
+      content: [{ type: "text", text: "中文 😀" }],
+      structuredContent: { label: "中文 😀" },
+    };
+    const started = await startResponseServer(async (socket, request) => {
+      await writeUtf8Fragments(socket, `${JSON.stringify({ id: request.id, ok: true, result })}\n`);
+      socket.end();
+    });
+
+    await expect(bridgeFor(started, "token").call("desktop_tools", {})).resolves.toEqual(result);
+  });
+
+  it("marks a lost response after submission as possibly sent without replaying", async () => {
+    let submitted = 0;
+    const started = await startResponseServer((socket) => {
+      submitted += 1;
+      socket.destroy();
+    });
+
+    await expect(bridgeFor(started, "token").call("desktop_call", {})).rejects.toMatchObject({
+      possibly_sent: true,
+      action_sent: true,
+      dispatch_status: "possibly_sent",
+    });
+    expect(submitted).toBe(1);
+  });
+
+  it("marks cancellation and timeout after submission as possibly sent", async () => {
+    for (const reason of [
+      new DOMException("aborted", "AbortError"),
+      new DOMException("timed out", "TimeoutError"),
+    ]) {
+      const controller = new AbortController();
+      const started = await startResponseServer(() => controller.abort(reason));
+
+      await expect(
+        bridgeFor(started, "token", fullRequestMeta, controller.signal).call("desktop_call", {}),
+      ).rejects.toMatchObject({
+        name: reason.name,
+        possibly_sent: true,
+        dispatch_status: "possibly_sent",
+      });
+    }
+  });
+
+  it("marks failure before submission and a complete broker rejection as not sent", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started = await startBroker(async () => {
+      throw new Error("must not execute");
+    });
+
+    await expect(
+      bridgeFor(started, "token", fullRequestMeta, controller.signal).call("desktop_call", {}),
+    ).rejects.toMatchObject({ possibly_sent: false, dispatch_status: "not_sent" });
+    await expect(bridgeFor(started, "wrong-token").call("desktop_call", {})).rejects.toMatchObject({
+      message: "Computer Use broker request is not authorized",
+      possibly_sent: false,
+      dispatch_status: "not_sent",
+    });
+    const absent = {
+      broker: { connection: { socketPath: `${started.broker.connection.socketPath}-absent` } },
+    };
+    await expect(bridgeFor(absent, "token").call("desktop_call", {})).rejects.toMatchObject({
+      possibly_sent: false,
+      dispatch_status: "not_sent",
+    });
+  });
 
   it("forwards the call's trusted request context to the shared runtime", async () => {
     const calls: unknown[] = [];
@@ -162,7 +339,9 @@ describe("node_repl CUA bridge", () => {
 
     await bridgeFor(started, call.token).call("left_click", { app_ref: { pid: 1 } });
 
-    expect(call.facts.cuaApps).toEqual([{ appKey: "darwin:com.apple.notes", displayName: "Notes" }]);
+    expect(call.facts.cuaApps).toEqual([
+      { appKey: "darwin:com.apple.notes", displayName: "Notes" },
+    ]);
     expect(other.facts.cuaApps).toEqual([]);
   });
 
@@ -228,7 +407,7 @@ describe("node_repl CUA bridge", () => {
       context: { sessionId: "session-1", runtimeScope: "main", workspaceKey: "/workspace" },
     });
 
-    expect(JSON.parse(response)).toEqual({
+    expect(JSON.parse(response)).toMatchObject({
       id: "direct",
       ok: false,
       error: "Computer Use is not available in subagent",
@@ -295,9 +474,11 @@ describe("node_repl CUA bridge", () => {
     await expect(
       bridgeFor(started, failedResult.token).call("get_app_state", { app: "Nowhere" }),
     ).resolves.toMatchObject({ isError: true });
-    await expect(bridgeFor(started, thrown.token).call("click", {})).rejects.toThrow(
-      "Computer Use Helper is not running",
-    );
+    await expect(bridgeFor(started, thrown.token).call("click", {})).rejects.toMatchObject({
+      message: "Computer Use Helper is not running",
+      possibly_sent: true,
+      dispatch_status: "possibly_sent",
+    });
     // 绕过 bridge 的 subagent 请求由 broker 拒绝。
     expect(
       JSON.parse(

@@ -110,6 +110,7 @@ export function injectZCodeCuaBrokerMcpServers(
   socketPath: string | undefined,
   token: string | undefined = undefined,
   trustedOfficialCuaServerNames: ReadonlySet<string> = new Set(),
+  agentDesktopBinary: string | undefined = process.env.MILOCODE_AGENT_DESKTOP_BINARY,
 ): Record<string, McpServerConfig> {
   const normalizedSocketPath = socketPath?.trim();
   const normalizedToken = token?.trim();
@@ -123,9 +124,27 @@ export function injectZCodeCuaBrokerMcpServers(
     }
     if (
       name !== NODE_REPL_SERVER_NAME ||
-      !normalizedSocketPath ||
       !trustedOfficialCuaServerNames.has(name)
     ) {
+      next[name] = config;
+      continue;
+    }
+    // 新开源执行器不使用旧私有 Helper socket。能力仍只定向授予当前 registry
+    // 中未被用户/项目配置替换的官方 node_repl，不能凭复制的插件 id 获得执行权。
+    if (config.type === "stdio" && agentDesktopBinary?.trim()) {
+      next[name] = {
+        ...config,
+        env: {
+          ...config.env,
+          MILOCODE_AGENT_DESKTOP_BINARY: agentDesktopBinary.trim(),
+          [ZCODE_CUA_NODE_REPL_HOST_ENV_KEY]: "1",
+          [ZCODE_PLUGIN_ID_ENV_KEY]: ZCODE_CUA_OFFICIAL_PLUGIN_ID,
+        },
+      };
+      changed = true;
+      continue;
+    }
+    if (!normalizedSocketPath) {
       next[name] = config;
       continue;
     }

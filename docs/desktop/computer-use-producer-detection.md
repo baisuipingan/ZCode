@@ -2,14 +2,14 @@
 
 ## 规则
 
-Computer Use 的真实实现来自 workspace 包 `@zcode/zcode-cua`（producer）。开源导出用 `packages/zcode-cua`
-占位包替换它，占位包在 `package.json` 声明 `zcodeCuaPlaceholder: true`，所有能力 fail-closed。
+`zcodeCuaPlaceholder` 只判定上游私有 Helper producer。MiloCode 在同包新增独立的
+`computerUseProvider: "agent-desktop"`，使用 Vercel agent-desktop v1.3.1。
+旧 Helper 接口继续占位，不能把 `zcodeCuaPlaceholder` 改成 false 来启用新执行器。
 
-占位包保留公共 `build` 和 `tsconfig.json` 入口，构建只检查随包类型声明。
-日志回调的 traceId 与参数类型和真实 producer 一致，使公共调用方无需按发行版本分支。
-根单测引用的 `vitest.config.ts` 也必须存在，运行占位执行入口和 broker 的不可用契约测试。
+包保留公共 runtime/broker 类型契约；新执行器经可信 Node REPL broker 调用。
+资源准备由 `packages/desktop/scripts/agent-desktop/` 独立管理，不触发旧 Helper 的构建/安装流程。
 
-开发、构建与打包中只服务于真实 Computer Use 的步骤，必须先检测到真实 producer 才执行；
+以下开发、构建与打包中只服务于旧私有 Helper 的步骤，必须先检测到真实 producer 才执行；
 检测不到时跳过，不能让开源树的入口因为缺少私有产物而失败：
 
 | 步骤                                                                   | 位置                                                  |
@@ -32,6 +32,6 @@ Sharp 的暂存与校验仍以“producer 是否声明 Sharp 依赖”为准（`
 ## 验收
 
 1. 闭源（真实 producer）：上述步骤行为不变。
-2. 占位包：`pnpm dev:desktop` 的准备脚本可加载，开发态插件运行时暂存返回空，Windows 不准备 Helper，
+2. 旧 Helper 占位包：`pnpm dev:desktop` 的准备脚本可加载，开发态插件运行时暂存返回空，Windows 不准备 Helper，
    打包不附带也不校验 Helper。
-3. 单测：`packages/desktop/test/placeholderProducerDetection.test.ts` 覆盖真实、占位、未安装三种情况与暂存跳过。
+3. Vercel provider：固定资源下载与 SHA-256 验证独立执行；包内必须同时包含 Mac CLI 与伴随 helper，Windows 包含 exe。新执行器 CUA 回归、资源工程测试和 UI 验收见 [接入规格](../fork/39-computer-use-agent-desktop.md)。

@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  ComputerUseRuntime,
-  ComputerUseRuntimeContext,
-} from "@zcode/zcode-cua";
+import type { ComputerUseRuntime, ComputerUseRuntimeContext } from "@zcode/zcode-cua";
 import type { Logger } from "@zcode/contracts";
 import type { NodeReplCuaAppIdentity, NodeReplRequestMeta } from "@zcode/core/repl";
 import { CUA_APP_ASSOCIATIONS_META_KEY } from "@zcode/zcode-cua/host-display-contract";
@@ -75,6 +72,7 @@ async function handleSocket(
   const abortController = new AbortController();
   let completed = false;
   let requestId: string | undefined;
+  let runtimeStarted = false;
   socket.on("error", () => {
     if (!completed) abortController.abort();
   });
@@ -90,6 +88,8 @@ async function handleSocket(
       input?: unknown;
       context?: unknown;
     };
+    // 拒绝也必须带回本请求的 id，Worker 才能把完整的未发送回执与传输失联区分。
+    if (typeof payload.id === "string") requestId = payload.id;
     // 只认本次调用的 token；会话信息按账本条目里来自 core 的 request-context 构造，Worker 发来的
     // context 不采信。修复原因（MR !3207 评审 CR-01）：原来整个进程共用一个 token、直接采信请求里的
     // context，cell 绕过 bridge 就能冒充别的会话，或在 subagent 里冒充主会话。
@@ -101,10 +101,10 @@ async function handleSocket(
     if (typeof payload.id !== "string" || typeof payload.method !== "string") {
       throw new Error("Computer Use broker request is invalid");
     }
-    requestId = payload.id;
     const context = parseContext(requestContext(entry.requestMeta));
     // Worker 侧 bridge 已先拒绝 subagent；这里兜住绕过 bridge 的请求。
     if (context.runtimeScope === "subagent") throw new Error(CUA_UNAVAILABLE_IN_SUBAGENT_MESSAGE);
+    runtimeStarted = true;
     const result = await runtime.execute({
       // 这里把 capability method 适配到 staging runtime 的内部 handler；
       // 外层 SDK/bridge 不再构造或调用 MCP tool envelope。
@@ -122,7 +122,16 @@ async function handleSocket(
   } catch (error) {
     completed = true;
     if (socket.writable) {
-      socket.end(`${JSON.stringify({ id: requestId ?? null, ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
+      socket.end(
+        `${JSON.stringify({
+          id: requestId ?? null,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          // execute 内异常若没有正常原生回执，不能把已可能执行的动作宣布为未发送。
+          possibly_sent: runtimeStarted,
+          dispatch_status: runtimeStarted ? "possibly_sent" : "not_sent",
+        })}\n`,
+      );
     }
   }
 }
@@ -189,9 +198,7 @@ function requestContext(meta: Readonly<NodeReplRequestMeta>): Record<string, unk
           trace: {
             traceId: stringMeta("trace_id"),
             ...(stringMeta("span_id") ? { spanId: stringMeta("span_id") } : {}),
-            ...(stringMeta("parent_span_id")
-              ? { parentSpanId: stringMeta("parent_span_id") }
-              : {}),
+            ...(stringMeta("parent_span_id") ? { parentSpanId: stringMeta("parent_span_id") } : {}),
           },
         }
       : {}),
@@ -199,12 +206,14 @@ function requestContext(meta: Readonly<NodeReplRequestMeta>): Record<string, unk
 }
 
 function parseContext(value: unknown): ComputerUseRuntimeContext {
-  if (!value || typeof value !== "object") throw new Error("Computer Use request context is missing");
+  if (!value || typeof value !== "object")
+    throw new Error("Computer Use request context is missing");
   const context = value as Record<string, unknown>;
   if (typeof context.sessionId !== "string" || !context.sessionId.trim()) {
     throw new Error("Computer Use request context is missing sessionId");
   }
-  const workspacePath = typeof context.workspacePath === "string" ? context.workspacePath.trim() : "";
+  const workspacePath =
+    typeof context.workspacePath === "string" ? context.workspacePath.trim() : "";
   const workspaceIdentity =
     typeof context.workspaceIdentity === "string" ? context.workspaceIdentity.trim() : "";
   const workspaceKey =
@@ -218,28 +227,36 @@ function parseContext(value: unknown): ComputerUseRuntimeContext {
     workspaceKey,
     ...(workspacePath ? { workspacePath } : {}),
     ...(workspaceIdentity ? { workspaceIdentity } : {}),
-    ...(typeof context.remoteSessionId === "string" ? { remoteSessionId: context.remoteSessionId } : {}),
+    ...(typeof context.remoteSessionId === "string"
+      ? { remoteSessionId: context.remoteSessionId }
+      : {}),
     ...(typeof context.turnId === "string" ? { turnId: context.turnId } : {}),
     // badge 文字（spec §4.8）：node_repl cell title。白名单重组此前把它丢掉，
     // 导致 actionTitle 断在 cua-broker socket 这一跳——badge 从未出现（2026-10-25 真机）。
     ...(typeof context.actionTitle === "string" && context.actionTitle.trim()
       ? { actionTitle: context.actionTitle.trim().slice(0, 120) }
       : {}),
-    ...(context.clientMode === "web-remote-replayable" || context.clientMode === "desktop-continuous"
+    ...(context.clientMode === "web-remote-replayable" ||
+    context.clientMode === "desktop-continuous"
       ? { clientMode: context.clientMode }
       : {}),
-    ...(context.deliveryKind === "web-remote-replayable" || context.deliveryKind === "desktop-continuous"
+    ...(context.deliveryKind === "web-remote-replayable" ||
+    context.deliveryKind === "desktop-continuous"
       ? { deliveryKind: context.deliveryKind }
       : {}),
-    ...(context.trace && typeof context.trace === "object" ? { trace: context.trace as ComputerUseRuntimeContext["trace"] } : {}),
+    ...(context.trace && typeof context.trace === "object"
+      ? { trace: context.trace as ComputerUseRuntimeContext["trace"] }
+      : {}),
   };
 }
 
 async function readLine(socket: Socket, signal: AbortSignal): Promise<string> {
   return await new Promise((resolve, reject) => {
+    // Unix socket / named pipe 的 chunk 可切断多字节字符，必须由流解码器跨 chunk 保留尾字节。
+    socket.setEncoding("utf8");
     let buffer = "";
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
+    const onData = (chunk: string) => {
+      buffer += chunk;
       if (Buffer.byteLength(buffer) > MAX_REQUEST_BYTES) {
         cleanup();
         reject(new Error("Computer Use broker request exceeded 1 MiB"));

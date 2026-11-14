@@ -1,8 +1,9 @@
 /* eslint-disable max-lines -- 权限频道注册、拖拽浮窗与前台应用返回等待共享同一 main 进程会话状态 */
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { app, BrowserWindow, ipcMain, nativeImage, screen } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, screen, shell } from "electron";
+import { resolveAgentDesktopResources } from "../../scripts/agent-desktop/config.mjs";
 import { PlatformChannels, type CuaPermissionKind, type Locale } from "@zcode/shared";
 import {
   cuaHelperBundleFingerprintUnchanged,
@@ -200,7 +201,9 @@ function waitForCuaApplicationReturn({
     observationTimer = setTimeout(
       () =>
         finish(
-          new Error(`System Settings did not return to MiloCode within ${Math.max(1, timeoutMs)}ms`),
+          new Error(
+            `System Settings did not return to MiloCode within ${Math.max(1, timeoutMs)}ms`,
+          ),
         ),
       Math.max(1, timeoutMs),
     );
@@ -427,6 +430,40 @@ export function registerCuaPermissionIpcHandlers(options: {
   });
 
   ipcMain.handle(PlatformChannels.OpenCuaPermissionOnboarding, async (event, payload) => {
+    const nativeDesktop = resolveAgentDesktopResources({
+      platform: process.platform,
+      arch: process.arch,
+      desktopRoot: resolve(import.meta.dirname, "../.."),
+      ...(app.isPackaged ? { resourcesDir: process.resourcesPath } : {}),
+    });
+    if (nativeDesktop) {
+      if (process.platform !== "darwin") {
+        return {
+          success: false,
+          error: "Windows desktop control does not use macOS privacy settings.",
+        };
+      }
+      const kind = payload?.initialPermission;
+      if (kind !== "accessibility" && kind !== "screen_recording") {
+        return {
+          success: false,
+          error: "Choose Accessibility or Screen Recording in Computer Use settings.",
+        };
+      }
+      try {
+        // Vercel 使用原生 CLI/sidecar，不存在旧私有 Helper.app。只打开用户选中的
+        // 系统面板并展示真实资源；不伪造授权完成、重启旧 Helper 或更改系统权限。
+        shell.showItemInFolder(nativeDesktop.binaryPath);
+        await shell.openExternal(
+          `x-apple.systempreferences:com.apple.preference.security?${
+            kind === "accessibility" ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
+          }`,
+        );
+        return { success: true, returnedFromSettings: false };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
     // 直接打开系统设置对应面板（不再弹确认对话框 + 不再 Finder 暴露 Helper 磁贴/动画）。
     const payloadRecord =
       payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;

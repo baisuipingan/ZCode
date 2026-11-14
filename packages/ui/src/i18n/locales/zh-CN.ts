@@ -51,7 +51,8 @@ const zhCN: Record<string, string> = {
   "brandAccount.login.browserDescription": "使用 MiloRouter 账号登录，模型调用与网站共用余额。",
   "brandAccount.login.browserSecurity":
     "在系统浏览器完成登录、安全验证和授权，客户端不会接触你的密码。",
-  "brandAccount.login.browserWaiting": "请在浏览器完成授权，然后回到 MiloCode。本次授权五分钟内有效。",
+  "brandAccount.login.browserWaiting":
+    "请在浏览器完成授权，然后回到 MiloCode。本次授权五分钟内有效。",
   "brandAccount.login.browserSubmit": "在浏览器登录",
   "brandAccount.login.browserPending": "等待浏览器授权…",
   "brandAccount.login.browserCancel": "取消本次登录",
@@ -8033,6 +8034,15 @@ const zhCN: Record<string, string> = {
   "settings.computerUse.title": "电脑控制",
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",
+  "settings.computerUse.native.title": "本机执行器",
+  "settings.computerUse.native.detected": "已检测到",
+  "settings.computerUse.native.unavailable": "不可用",
+  "settings.computerUse.native.refresh": "刷新状态",
+  "settings.computerUse.native.unconfirmed": "尚未确认原生执行器状态，请刷新检查当前版本。",
+  "settings.computerUse.native.macHint":
+    "请在系统设置中允许辅助功能和屏幕录制。系统列表可能显示 MiloCode、agent-desktop 或其原生执行程序，请按实际条目授权。刷新只读取状态，不会请求授权、截图或输入。",
+  "settings.computerUse.native.windowsHint":
+    "仅支持当前已解锁的交互桌面。管理员权限窗口、UAC 安全桌面和锁屏可能无法控制；缺少原生资源时请重新安装完整版本。",
   "settings.computerUse.composerEntry.label": "在输入框显示电脑操作按钮",
   "settings.computerUse.composerEntry.description": "关闭后输入框不再显示电脑操作按钮。",
   "settings.computerUse.composerEntry.requiresEnabled":
@@ -8044,6 +8054,8 @@ const zhCN: Record<string, string> = {
     "Computer Use 暂不支持 SSH、WSL、Docker 或其他远端环境。请切换到本机 macOS 或 Windows 工作区。",
   "settings.computerUse.unsupported.linuxDescription":
     "Computer Use 暂不支持 Linux 桌面环境。请切换到本机 macOS 或 Windows 工作区。",
+  "settings.computerUse.unsupported.webDescription":
+    "浏览器无法使用本机电脑控制。请在 MiloCode 桌面客户端的本机 macOS 或 Windows 工作区使用。",
   "settings.computerUse.unsupported.badge": "当前环境不可用",
   "settings.computerUse.unsupported.group": "不可用的内置能力",
   "scheduledPreview.keepAwakeEnabled": "已开启保持唤醒",

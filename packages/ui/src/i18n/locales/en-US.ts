@@ -8491,6 +8491,16 @@ const enUS: Record<string, string> = {
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":
     "Turning this on enables Computer Use — its MCP server and skills.",
+  "settings.computerUse.native.title": "Local executor",
+  "settings.computerUse.native.detected": "Detected",
+  "settings.computerUse.native.unavailable": "Unavailable",
+  "settings.computerUse.native.refresh": "Refresh status",
+  "settings.computerUse.native.unconfirmed":
+    "Native status has not been confirmed. Refresh to check this build.",
+  "settings.computerUse.native.macHint":
+    "Allow Accessibility and Screen Recording in System Settings. The entry may be MiloCode, agent-desktop, or its native executable; authorize the actual entry shown. Refresh only reads status and does not request permission, capture the screen, or send input.",
+  "settings.computerUse.native.windowsHint":
+    "Requires an unlocked interactive desktop. Elevated windows, the UAC secure desktop, and the lock screen may be inaccessible. Reinstall the full application if native resources are missing.",
   "settings.computerUse.composerEntry.label": "Show Computer Use button in the composer",
   "settings.computerUse.composerEntry.description": "When off, the composer button is hidden.",
   "settings.computerUse.composerEntry.requiresEnabled":
@@ -8503,6 +8513,8 @@ const enUS: Record<string, string> = {
     "Computer Use is not yet supported for SSH, WSL, Docker, or other remote environments. Switch to a local macOS or Windows workspace.",
   "settings.computerUse.unsupported.linuxDescription":
     "Computer Use is not yet supported on Linux desktops. Switch to a local macOS or Windows workspace.",
+  "settings.computerUse.unsupported.webDescription":
+    "Browser sessions cannot control the local desktop. Use a local macOS or Windows workspace in the MiloCode desktop application.",
   "settings.computerUse.unsupported.badge": "Unavailable here",
   "settings.computerUse.unsupported.group": "Unavailable built-in capabilities",
   "scheduledPreview.keepAwakeEnabled": "Keep awake enabled",

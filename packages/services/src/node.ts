@@ -33,6 +33,11 @@ export {
 } from "./brand-account/index.js";
 import { randomBytes } from "node:crypto";
 import {
+  getAgentDesktopPermissionStatus,
+  isAgentDesktopConfigured,
+} from "@zcode/zcode-cua/agent-desktop";
+import { isRemoteWorkspaceIdentity, ZCODE_CUA_OFFICIAL_PLUGIN_ID } from "@zcode/shared";
+import {
   createFailClosedAccountProviderConfigSnapshot,
   type AccountProviderConfigSnapshot,
   type ProviderSource,
@@ -1781,11 +1786,12 @@ export function createLocalServices(options: {
     // ZCODE_CUA_PRODUCT_HELPER=1）即视为启用，不依赖 config.json 显式 enable——main 的 bootstrap
     // 用 isZCodeCuaInternalFeatureEnabled 门控 bundled plugin，与 feat 的 workspace enablement 不同。
     // 生产路径（dev mode off）回落到官方插件 workspace enablement 判定（与 feat 一致）。
-    isZCodeCuaInternalFeatureEnabled(process.env) ||
-    isOfficialCuaPluginEnabledForWorkspace({
-      env: process.env,
-      workingDirectory: context?.workspacePath,
-    });
+    !isAgentDesktopConfigured(process.env) &&
+    (isZCodeCuaInternalFeatureEnabled(process.env) ||
+      isOfficialCuaPluginEnabledForWorkspace({
+        env: process.env,
+        workingDirectory: context?.workspacePath,
+      }));
   const defaultCuaProductHelperLifecycle =
     new CuaHelperLifecycleManager<ManagedDefaultCuaProductHelper>(async (managed) => {
       await managed.helper.host.stop();
@@ -1993,6 +1999,43 @@ export function createLocalServices(options: {
       workspaceIdentity?: string,
       queryOptions?: CuaPermissionStatusQueryOptions,
     ): Promise<CuaPermissionStatusResult> {
+      if (isAgentDesktopConfigured(process.env)) {
+        // 开源 provider 不经过旧私有 Helper gate。插件状态仍向 CLI 唯一所有者查询，
+        // 不复制配置或新建一套 enable 缓存；权限查询只读，不触发截图/输入/授权。
+        if (
+          options?.serviceAuthorityMode !== "desktop-local" ||
+          !workspacePath ||
+          (workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim()))
+        ) {
+          return {
+            available: false,
+            provider: "agent-desktop",
+            reason: "Computer Use is only available in a local desktop workspace.",
+          };
+        }
+        try {
+          const { plugins } = await zcodeAgentService.listPlugins({
+            workspacePath,
+            workspaceIdentity,
+          });
+          if (
+            !plugins.some((plugin) => plugin.id === ZCODE_CUA_OFFICIAL_PLUGIN_ID && plugin.enabled)
+          ) {
+            return {
+              available: false,
+              provider: "agent-desktop",
+              reason: "Enable the Computer Use plugin to use desktop control.",
+            };
+          }
+          return await getAgentDesktopPermissionStatus(process.env);
+        } catch (error) {
+          return {
+            available: false,
+            provider: "agent-desktop",
+            reason: `Could not read Computer Use status: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      }
       if (process.platform !== "darwin" && process.platform !== "win32") {
         return {
           available: false,
@@ -2122,6 +2165,13 @@ export function createLocalServices(options: {
       workspaceIdentity?: string,
       restartOptions?: CuaPermissionRestartOptions,
     ): Promise<CuaPermissionRestartResult> {
+      if (isAgentDesktopConfigured(process.env)) {
+        return {
+          ok: false,
+          reason:
+            "agent-desktop reads system permissions on the next call; retry the task after granting access. No private Helper restart is needed.",
+        };
+      }
       if (process.platform !== "darwin") {
         return {
           ok: false,

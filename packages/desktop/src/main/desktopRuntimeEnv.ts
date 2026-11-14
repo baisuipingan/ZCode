@@ -28,6 +28,7 @@ import {
 } from "@zcode/shared";
 import { resolvePlatformKeyForPackagedApp } from "../../scripts/target-platform.mjs";
 import { resolveDesktopRuntimeApplicationNameForFlavor } from "../../scripts/desktop-product-identity.mjs";
+import { resolveAgentDesktopResources } from "../../scripts/agent-desktop/config.mjs";
 import {
   getAppConfigDir,
   getDataBaseDir,
@@ -517,6 +518,12 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     ...readDefinedProcessEnv(),
   };
   const packagedDesktop = isElectronAppPackaged();
+  const agentDesktopResources = resolveAgentDesktopResources({
+    platform: process.platform,
+    arch: process.arch,
+    desktopRoot: resolve(import.meta.dirname, "../.."),
+    ...(packagedDesktop ? { resourcesDir: process.resourcesPath } : {}),
+  });
   const bundledCuaHelperAppPath =
     process.platform !== "darwin"
       ? undefined
@@ -568,6 +575,10 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
   // 三层里有两层不写这个键，空对象无法覆盖 inheritedEnv，所以先无条件删掉继承值再按决策 spread 回去。
   // 少了这一行，production 包和 dev 的非法取值都会原样穿透到 Host。
   delete inheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
+  // 原生执行器路径只由桌面资源布局决定。shell、项目或旧版本残留变量不得替换随包程序；
+  // 缺文件时保留预期路径，由 provider 给出资源缺失错误，不退回 PATH 或在线安装。
+  delete inheritedEnv.MILOCODE_AGENT_DESKTOP_BINARY;
+  delete inheritedEnv.ZCODE_CUA_NODE_REPL_HOST;
 
   return {
     ...inheritedEnv,
@@ -585,6 +596,9 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     ...(isPreviewPackagedRuntime ? { ZCODE_CUA_HELPER_INSTALL_VARIANT: "preview" } : {}),
     // Dynamic Workflow 灰度的本地覆盖：Main 决策后写入，production 包为空对象（继承值已在上面删除）。
     ...dynamicWorkflowModeHostEnv,
+    ...(agentDesktopResources
+      ? { MILOCODE_AGENT_DESKTOP_BINARY: agentDesktopResources.binaryPath }
+      : {}),
     // 模型请求默认 header 由 agent 进程构造，过去只继承 shell env 导致桌面启动时拿不到 app 版本。
     // 这里从 main 进程显式下发，agent 子进程继承 host env 后即可稳定写入请求 header。
     [ZCODE_APP_VERSION_ENV]: ZCODE_VERSION,

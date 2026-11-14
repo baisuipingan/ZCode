@@ -83,9 +83,15 @@ async function sendCuaBrokerRequest(
   const id = randomUUID();
   return await new Promise((resolve, reject) => {
     const socket = createConnection(broker.socketPath);
+    // snapshot 可能含中文和 emoji；不能把任意 socket chunk 当成完整 UTF-8 文本解码。
+    socket.setEncoding("utf8");
     let buffer = "";
     let settled = false;
-    const finish = (error?: unknown, value?: { result: CallToolResult; responseMeta?: Record<string, unknown> }) => {
+    let requestSubmitted = false;
+    const finish = (
+      error?: unknown,
+      value?: { result: CallToolResult; responseMeta?: Record<string, unknown> },
+    ) => {
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", onAbort);
@@ -94,15 +100,38 @@ async function sendCuaBrokerRequest(
       else if (value) resolve(value);
       else reject(new Error("Computer Use broker returned no response"));
     };
-    const onAbort = () => finish(signal.reason ?? new DOMException("aborted", "AbortError"));
+    const fail = (error: unknown, receiptPossiblySent?: boolean) => {
+      // socket.write 后失联不能证明原生动作未执行；仅完整拒绝回执或写出前失败可以确认未发送。
+      const possiblySent = receiptPossiblySent ?? requestSubmitted;
+      const original = error instanceof Error ? error : new Error(String(error));
+      const failure = Object.assign(new Error(original.message, { cause: original }), {
+        name: original.name,
+        code:
+          "code" in original && typeof original.code === "string"
+            ? original.code
+            : "CUA_BROKER_TRANSPORT_ERROR",
+        possibly_sent: possiblySent,
+        action_sent: possiblySent,
+        dispatch_status: possiblySent ? "possibly_sent" : "not_sent",
+      });
+      finish(failure);
+    };
+    const onAbort = () => fail(signal.reason ?? new DOMException("aborted", "AbortError"));
     signal.addEventListener("abort", onAbort, { once: true });
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ id, token: broker.token, ...request })}\n`);
+      if (settled) return;
+      try {
+        const frame = `${JSON.stringify({ id, token: broker.token, ...request })}\n`;
+        requestSubmitted = true;
+        socket.write(frame);
+      } catch (error) {
+        fail(error);
+      }
     });
-    socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
       if (Buffer.byteLength(buffer) > MAX_RESPONSE_BYTES) {
-        finish(new Error("Computer Use broker response exceeded the 32 MiB limit"));
+        fail(new Error("Computer Use broker response exceeded the 32 MiB limit"));
         return;
       }
       const newline = buffer.indexOf("\n");
@@ -114,18 +143,36 @@ async function sendCuaBrokerRequest(
           error?: unknown;
           result?: CallToolResult;
           responseMeta?: Record<string, unknown>;
+          possibly_sent?: unknown;
+          dispatch_status?: unknown;
         };
         if (payload.id !== id) throw new Error("Computer Use broker response id mismatch");
-        if (payload.ok !== true) throw new Error(typeof payload.error === "string" ? payload.error : "Computer Use broker failed");
+        if (payload.ok === false) {
+          const receiptPossiblySent =
+            payload.possibly_sent === true || payload.dispatch_status === "possibly_sent"
+              ? true
+              : payload.possibly_sent === false && payload.dispatch_status === "not_sent"
+                ? false
+                : undefined;
+          fail(
+            new Error(
+              typeof payload.error === "string" ? payload.error : "Computer Use broker failed",
+            ),
+            receiptPossiblySent,
+          );
+          return;
+        }
+        if (payload.ok !== true)
+          throw new Error("Computer Use broker returned an invalid response");
         if (!payload.result) throw new Error("Computer Use broker returned no result");
         finish(undefined, { result: payload.result, responseMeta: payload.responseMeta });
       } catch (error) {
-        finish(error);
+        fail(error);
       }
     });
-    socket.once("error", finish);
+    socket.once("error", fail);
     socket.once("close", () => {
-      if (!settled) finish(new Error("Computer Use broker closed before returning a response"));
+      if (!settled) fail(new Error("Computer Use broker closed before returning a response"));
     });
     if (signal.aborted) onAbort();
   });

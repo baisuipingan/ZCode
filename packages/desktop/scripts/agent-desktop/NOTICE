@@ -1,0 +1,9 @@
+agent-desktop v1.3.1
+Source: https://github.com/vercel-labs/agent-desktop/tree/v1.3.1
+Copyright and licensing: Apache License, Version 2.0; see accompanying LICENSE.
+
+This distribution includes unmodified official agent-desktop executables.
+MiloCode supplies the integration and packaging metadata, not the upstream implementation.
+The macOS companion agent-desktop-macos-helper is part of the same pinned distribution.
+Exact release URLs and SHA-256 checksums are recorded in SOURCES.json.
+Upstream does not include a separate NOTICE file in this release.

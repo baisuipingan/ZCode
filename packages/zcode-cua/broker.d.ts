@@ -98,6 +98,8 @@ export type CuaPermissionState = "granted" | "stale" | "denied" | "unknown";
 
 export interface CuaPermissionStatus {
   available?: true;
+  provider?: "agent-desktop";
+  binaryPath?: string;
   platform?: string;
   grantOwner: string | null;
   owner?: { display_name?: string } | null;
@@ -113,6 +115,7 @@ export interface CuaPermissionStatus {
 
 export interface CuaPermissionStatusUnavailable {
   available: false;
+  provider?: "agent-desktop";
   reason: string;
   idle?: boolean;
   grantOwnerDisplayName?: string | null;

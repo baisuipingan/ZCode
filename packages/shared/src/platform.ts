@@ -720,8 +720,7 @@ export type DesktopCommandId = (typeof DesktopCommandIds)[keyof typeof DesktopCo
  * CUA Helper 的操作系统支持态（macOS 版本门槛判定结果，主进程经
  * GetCuaOsSupport 下发给 renderer）。
  * - supported：满足门槛（含非版本因素，如解析失败时按宽松处理）。
- * - macos-below-minimum：macOS 低于承诺地板（Helper LSMinimumSystemVersion 12.0），
- *   低版本上 Helper 会被 LaunchServices -10825 拒启，表象是授权反复无响应。
+ * - macos-below-minimum：macOS 低于 agent-desktop 的官方支持地板 13.0。
  * - not-applicable：非 darwin 平台，无 macOS 版本门槛概念。
  */
 export type CuaOsSupport =

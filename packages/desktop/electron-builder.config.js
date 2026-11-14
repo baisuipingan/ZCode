@@ -13,6 +13,11 @@ import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config
 import { resolveBuildTimeConfig } from "../../scripts/build-time-config.mjs";
 import { prepareMacSparkleRuntime } from "./scripts/milocode-sparkle-runtime.mjs";
 import {
+  getAgentDesktopExtraResources,
+  resolveAgentDesktopBuilderTarget,
+} from "./scripts/agent-desktop/config.mjs";
+import { verifyPackagedAgentDesktopResources } from "./scripts/agent-desktop/assets.mjs";
+import {
   noticesFileName,
   stageElectronNotices,
 } from "../../scripts/third-party-notices.mjs";
@@ -795,6 +800,16 @@ export default {
     );
   },
   afterPack: async (context) => {
+    await runTimedAsync("afterPack:verifyAgentDesktopResources", () =>
+      verifyPackagedAgentDesktopResources({
+        resourcesDir: resolvePackagedResourcesDir(context),
+        ...resolveAgentDesktopBuilderTarget({
+          electronPlatformName: context.electronPlatformName,
+          arch: context.arch,
+          configuredTarget: targetPlatform,
+        }),
+      }),
+    );
     await runTimedAsync("afterPack:assertInitialAppAsarIntegrity", () =>
       assertAppAsarIntegrity(resolveAppAsarPath(context)),
     );
@@ -861,6 +876,7 @@ export default {
     }
   },
   extraResources: [
+    ...getAgentDesktopExtraResources({ platform: targetPlatform.os, arch: targetPlatform.arch }),
     ...(shouldPackageMiloCodeSparkle
       ? [
           {

@@ -26,6 +26,22 @@ import {
 const LEGACY_BROKER_TOKEN_ENV = "ZCODE_CUA_PERMISSION_BROKER_TOKEN";
 
 describe("project MCP config", () => {
+  it("injects the native provider only into the trusted official node_repl", () => {
+    const servers: Record<string, McpServerConfig> = {
+      node_repl: { type: "stdio", command: "node", args: ["repl.js"] },
+      other: { type: "stdio", command: "node" },
+    };
+    const binary = "/Applications/MiloCode.app/Contents/Resources/agent-desktop/agent-desktop";
+    const injected = injectZCodeCuaBrokerMcpServers(
+      servers, undefined, undefined, new Set(["node_repl"]), binary,
+    );
+    expect(injected.node_repl).toMatchObject({ env: {
+      MILOCODE_AGENT_DESKTOP_BINARY: binary,
+      ZCODE_CUA_NODE_REPL_HOST: "1",
+    } });
+    expect(injected.other).toBe(servers.other);
+    expect(injectZCodeCuaBrokerMcpServers(servers, undefined, undefined, new Set(), binary)).toBe(servers);
+  });
   // CUA 已不再声明任何 MCP server（.zcode-plugin/plugin.json 去掉 mcpServers，执行面搬到
   // 共享 node_repl 宿主），因此官方 CUA server 不出现在任何默认连接集合里。
   // 旧 server 的剔除由 mcp-project-config-startup.test.ts 的启动/状态用例及下方 direct-CLI 用例覆盖；

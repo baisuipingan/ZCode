@@ -179,7 +179,10 @@ function isFunctionallyReady(result: CuaPermissionStatusResult | null): boolean 
 }
 
 /** 应用 sticky 探针，返回真正对外发布的结果。 */
-function withStickyProbes(slot: Slot, result: CuaPermissionStatusResult): CuaPermissionStatusResult {
+function withStickyProbes(
+  slot: Slot,
+  result: CuaPermissionStatusResult,
+): CuaPermissionStatusResult {
   if (!("accessibility" in result)) {
     slot.stickyReady = null;
     return result;
@@ -304,7 +307,11 @@ export function fetchCuaPermissionStatus(params: FetchCuaPermissionStatusParams)
       //   直到下一次真实事件（focus / 重新挂载 / 显式 refresh）重新采样。这是刻意的：通道故障
       //   说明「我们不知道权限状态」，而不是「权限有问题」，把它渲染成红色错误会误导用户去
       //   重新授权。代价是这种故障下没有可见的错误提示，仅在 RPC 持续失败时出现。
-      const transient = !completed || !isCuaPermissionStatusAvailable(completed);
+      // agent-desktop 的缺资源/插件关闭是明确结果，不存在旧 Helper 的后台启动窗口。
+      // 必须立即展示原因，否则多次退避只会把确定错误隐藏成“验证中”。
+      const transient =
+        !completed ||
+        (!isCuaPermissionStatusAvailable(completed) && completed.provider !== "agent-desktop");
       if (transient && scheduleTransientRetry(slot, params)) {
         publish(slot, {
           status: slot.snapshot.status,

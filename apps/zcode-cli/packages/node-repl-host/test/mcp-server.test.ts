@@ -75,6 +75,32 @@ describe("node_repl MCP server", () => {
     });
   });
 
+  it("admits the native provider only from the official host capability injection", () => {
+    const env = { MILOCODE_AGENT_DESKTOP_BINARY: "/tmp/agent-desktop" };
+    expect(captureComputerUseRuntimeFromEnvironment(env)).toBeUndefined();
+    const native = captureComputerUseRuntimeFromEnvironment({
+      ...env, ZCODE_CUA_NODE_REPL_HOST: "1",
+    });
+    expect(native).toBeDefined();
+    void native?.dispose();
+  });
+
+  it("awaits native child cleanup when disposing the shared MCP runtime", async () => {
+    let release!: () => void;
+    let finished = false;
+    const nativeCleanup = new Promise<void>((resolve) => { release = resolve; });
+    const nativeRuntime = createNodeReplMcpRuntime({ cuaRuntime: {
+      execute: async () => ({ content: [] }),
+      closeSession: async () => {},
+      dispose: async () => { await nativeCleanup; finished = true; },
+    } });
+    const disposing = nativeRuntime.dispose();
+    expect(finished).toBe(false);
+    release();
+    await disposing;
+    expect(finished).toBe(true);
+  });
+
   it("captures Computer Use credentials before the plugin host restores its environment", async () => {
     const capturedRuntime = captureComputerUseRuntimeFromEnvironment({
       ZCODE_CUA_PERMISSION_BROKER_SOCKET: "/tmp/deferred-cua.sock",

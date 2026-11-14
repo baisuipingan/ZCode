@@ -65,6 +65,201 @@ registerOffPeakEligibilityCases(() => ({ browser, origin }));
 registerProviderPresentationCases(() => ({ browser, origin, artifacts }));
 registerProviderModelEditorCases(() => ({ browser, origin, artifacts }));
 registerProgressiveModelEditorCases(() => ({ browser, origin, artifacts }));
+
+const nativeCuaStatus = {
+  available: true,
+  provider: "agent-desktop",
+  binaryPath: "/fixture/native/agent-desktop",
+  grantOwner: null,
+  accessibility: "denied",
+  screenRecording: "denied",
+};
+async function openComputerUseFixture(
+  target,
+  { enabled = true, status = nativeCuaStatus, width = 1200, failToggle = false } = {},
+) {
+  const page = await browser.newPage({ viewport: { width, height: 1000 } });
+  const calls = [];
+  let currentStatus = status;
+  await page.route("**/cua-rpc", async (route) => {
+    const request = route.request().postDataJSON();
+    calls.push(request);
+    await route.fulfill({
+      status: failToggle && request.action === "toggle" ? 500 : 200,
+      body: JSON.stringify(request.action === "status" ? currentStatus : {}),
+    });
+  });
+  await page.goto(
+    `${origin}fixture?${new URLSearchParams({ computerUse: target, cuaEnabled: String(enabled), locale: "en-US", theme: width === 390 ? "light" : "dark" })}`,
+  );
+  return {
+    page,
+    calls,
+    setStatus: (next) => {
+      currentStatus = next;
+    },
+  };
+}
+for (const width of [390, 1200]) {
+  test(`Computer Use native macOS permissions and explicit settings ${width}`, async () => {
+    const { page, calls, setStatus } = await openComputerUseFixture("mac", { width });
+    try {
+      await page.getByText("/fixture/native/agent-desktop", { exact: true }).waitFor();
+      assert.equal(await page.getByText("Missing", { exact: true }).count(), 2);
+      const permissionOpened = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/cua-rpc") &&
+          response.request().postDataJSON().action === "open-permission",
+      );
+      await page.getByRole("button", { name: "Open Accessibility Settings", exact: true }).click();
+      await permissionOpened;
+      const opened = calls.find((call) => call.action === "open-permission");
+      assert.deepEqual(opened?.payload, {
+        initialPermission: "accessibility",
+        requiredPermissions: ["accessibility"],
+      });
+      assert.ok(
+        calls
+          .filter((call) => call.action === "status")
+          .every((call) => call.payload.options?.includeFunctionalProbes !== true),
+      );
+      assert.equal(calls.filter((call) => call.action === "forbidden-restart").length, 0);
+      assert.equal(
+        await page.getByRole("button", { name: "Restart Helper", exact: true }).count(),
+        0,
+      );
+      setStatus({ ...nativeCuaStatus, accessibility: "granted", screenRecording: "granted" });
+      await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+      await page.getByText("Granted", { exact: true }).first().waitFor();
+      assert.equal(await page.getByText("Granted", { exact: true }).count(), 2);
+      const settingsSaved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/cua-rpc") &&
+          response.request().postDataJSON().action === "settings",
+      );
+      await page
+        .getByRole("switch", { name: "Show Computer Use button in the composer", exact: true })
+        .click();
+      await settingsSaved;
+      await page
+        .getByRole("switch", {
+          name: "Show Computer Use button in the composer",
+          exact: true,
+          checked: true,
+        })
+        .waitFor();
+      assert.deepEqual(calls.find((call) => call.action === "settings")?.payload, {
+        computerUseComposerEntryHidden: false,
+      });
+      const geometry = await page.evaluate(() => ({
+        width: innerWidth,
+        scroll: document.documentElement.scrollWidth,
+      }));
+      assert.ok(geometry.scroll <= geometry.width, "Computer Use settings overflow horizontally");
+      await mkdir(artifacts, { recursive: true });
+      await page.screenshot({
+        path: join(artifacts, `computer-use-native-${width}.png`),
+        fullPage: true,
+      });
+    } finally {
+      await page.close();
+    }
+  });
+}
+test("Computer Use Windows reports missing resources and hides macOS permissions", async () => {
+  const { page, calls, setStatus } = await openComputerUseFixture("windows", {
+    status: {
+      available: false,
+      provider: "agent-desktop",
+      reason: "Native resource missing for win32-x64",
+    },
+  });
+  try {
+    await page.getByText("Native resource missing for win32-x64", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Accessibility", { exact: true }).count(), 0);
+    assert.equal(
+      await page.getByRole("button", { name: "Open Screen Recording", exact: true }).count(),
+      0,
+    );
+    await page.getByText(/UAC/).waitFor();
+    setStatus({ ...nativeCuaStatus, accessibility: "granted", screenRecording: "granted" });
+    await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await page.getByText("/fixture/native/agent-desktop", { exact: true }).waitFor();
+    await page.getByRole("switch", { name: "Enable Computer Use", exact: true }).click();
+    await page
+      .getByText("/fixture/native/agent-desktop", { exact: true })
+      .waitFor({ state: "hidden" });
+    assert.equal(
+      calls.filter(
+        (call) => call.action === "open-permission" || call.action === "forbidden-restart",
+      ).length,
+      0,
+    );
+  } finally {
+    await page.close();
+  }
+});
+test("Computer Use plugin failure rolls back without permission side effects", async () => {
+  const { page, calls } = await openComputerUseFixture("mac", { enabled: false, failToggle: true });
+  try {
+    const toggle = page.getByRole("switch", { name: "Enable Computer Use", exact: true });
+    await toggle.waitFor();
+    assert.equal(
+      await page.getByRole("button", { name: "Refresh status", exact: true }).count(),
+      0,
+    );
+    assert.equal(calls.filter((call) => call.action === "status").length, 0);
+    await toggle.click();
+    await page.getByText("controlled Computer Use RPC failure", { exact: true }).waitFor();
+    assert.equal(await toggle.getAttribute("aria-checked"), "false");
+    assert.equal(
+      await page
+        .getByRole("switch", { name: "Show Computer Use button in the composer", exact: true })
+        .isDisabled(),
+      true,
+    );
+    assert.equal(
+      calls.filter(
+        (call) => call.action === "open-permission" || call.action === "forbidden-restart",
+      ).length,
+      0,
+    );
+  } finally {
+    await page.close();
+  }
+});
+test("Computer Use does not treat legacy granted state as native verification", async () => {
+  const { page } = await openComputerUseFixture("mac", {
+    status: {
+      ...nativeCuaStatus,
+      provider: undefined,
+      accessibility: "granted",
+      screenRecording: "granted",
+    },
+  });
+  try {
+    await page
+      .getByText("Native status has not been confirmed. Refresh to check this build.", {
+        exact: true,
+      })
+      .waitFor();
+    assert.equal(await page.getByText("Granted", { exact: true }).count(), 0);
+  } finally {
+    await page.close();
+  }
+});
+for (const target of ["remote", "linux", "web"]) {
+  test(`Computer Use ${target} is explicitly unsupported without native calls`, async () => {
+    const { page, calls } = await openComputerUseFixture(target);
+    try {
+      await page.getByText("Computer Use is unavailable here", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("switch").count(), 0);
+      assert.equal(calls.length, 0);
+    } finally {
+      await page.close();
+    }
+  });
+}
 for (const [width, locale, theme] of [
   [390, "zh-CN", "light"],
   [1200, "en-US", "dark"],

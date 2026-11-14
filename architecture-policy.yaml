@@ -55,6 +55,26 @@ modules:
   - id: desktop
     roots: [packages/desktop/src]
     managed: false
+  - id: milocode-computer-use
+    roots: [packages/zcode-cua/src/agent-desktop]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/zcode-cua/src/agent-desktop/index.js
+      - packages/zcode-cua/src/agent-desktop/index.d.ts
+      - packages/zcode-cua/src/agent-desktop/contract.ts
+    layers: { adapters: "." }
+    owner: desktop-computer-use
+  - id: milocode-computer-use-assets
+    roots: [packages/desktop/scripts/agent-desktop]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/desktop/scripts/agent-desktop/assets.mjs
+      - packages/desktop/scripts/agent-desktop/config.mjs
+      - packages/desktop/scripts/agent-desktop/contract.ts
+    layers: { adapters: "." }
+    owner: desktop-computer-use
   - id: milocode-update-trust
     roots:
       - packages/desktop/src/main/milocode-update-trust

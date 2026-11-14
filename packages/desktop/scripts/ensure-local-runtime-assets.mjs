@@ -10,9 +10,15 @@ import {
 import { verifyBuiltNativeSearchTools } from "../../../scripts/native-search-tools-verify.mjs";
 import { runCommand } from "../../../scripts/spawn-command.mjs";
 import { getTargetPlatform } from "./target-platform.mjs";
+import { resolveAgentDesktopResources } from "./agent-desktop/config.mjs";
+import { verifyAgentDesktopResources } from "./agent-desktop/assets.mjs";
 
 const desktopRoot = resolve(import.meta.dirname, "..");
 const target = getTargetPlatform();
+const agentDesktopResources = resolveAgentDesktopResources({
+  platform: target.os,
+  arch: target.arch,
+});
 const bundledToolsRoot = join(desktopRoot, "bundled-tools", target.key);
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
@@ -70,6 +76,22 @@ function isNativeSearchReady() {
 }
 
 const REQUIRED_LOCAL_RUNTIME_ASSETS = [
+  ...(agentDesktopResources
+    ? [
+        {
+          label: "agent-desktop",
+          script: "prepare:agent-desktop",
+          isReady: async () => {
+            try {
+              await verifyAgentDesktopResources(agentDesktopResources);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        },
+      ]
+    : []),
   ...(nativeSearchReleasePlan.enabled
     ? [
         {

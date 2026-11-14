@@ -1,5 +1,5 @@
-// Computer Use Helper 的 macOS 权限状态。状态来自 Helper 当前 runtime preflight，
-// 历史 TCC 行不参与判定；展示口径见 cuaPermissionStatusStore 的 isCuaPermissionTccGranted。
+// Computer Use 原生执行器的只读状态（macOS 权限 / Windows 资源可用性）。
+// 是否查询由调用方的本机平台和插件状态门控；本 hook 不请求授权、截图或桌面输入。
 //
 // 刷新策略**不再定时轮询**，改为事件驱动，只在这三个时机各拉一次——
 // - 挂载（进入设置页 / 输入框入口首次渲染）；
