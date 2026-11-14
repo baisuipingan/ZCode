@@ -8492,13 +8492,32 @@ const enUS: Record<string, string> = {
   "settings.computerUse.toggleDescription":
     "Turning this on enables Computer Use — its MCP server and skills.",
   "settings.computerUse.native.title": "Local executor",
+  "settings.computerUse.native.description":
+    "Computer control is included with MiloCode. No separate installation is needed.",
   "settings.computerUse.native.detected": "Detected",
   "settings.computerUse.native.unavailable": "Unavailable",
   "settings.computerUse.native.refresh": "Refresh status",
+  "settings.computerUse.native.checkPermissions": "Check permissions",
+  "settings.computerUse.native.details": "Technical details",
   "settings.computerUse.native.unconfirmed":
     "Native status has not been confirmed. Refresh to check this build.",
   "settings.computerUse.native.macHint":
-    "Allow Accessibility and Screen Recording in System Settings. The entry may be MiloCode, agent-desktop, or its native executable; authorize the actual entry shown. Refresh only reads status and does not request permission, capture the screen, or send input.",
+    "Accessibility allows keyboard, mouse, and interface access. Screen Recording allows screenshots. Checking only reads permission status; it does not request access, capture screenshots, or send input.",
+  "settings.computerUse.application.title": "Current app to authorize",
+  "settings.computerUse.application.loading": "Checking the current app…",
+  "settings.computerUse.application.reveal": "Reveal current app",
+  "settings.computerUse.application.unavailable":
+    "The current app location could not be confirmed. Use the complete installed MiloCode client.",
+  "settings.computerUse.application.hint":
+    "Authorize MiloCode at the path above. Each permission button opens its system settings and reveals this app in Finder; do not add the internal executor separately. Install MiloCode in Applications to avoid confusing copies with the same name.",
+  "settings.computerUse.application.reauthorizeTitle": "This app still needs permissions",
+  "settings.computerUse.application.reauthorizeHint":
+    "Updating, re-signing, or moving the app may invalidate an older grant. If the system toggle is on but this check still fails, remove the old MiloCode entry, add the current app at the path above, and enable it. Allow Accessibility and Screen Recording separately.",
+  "settings.computerUse.application.restartHint":
+    "Permissions are checked again when you return here. If macOS asks you to reopen the app, finish or save your current task before quitting and opening MiloCode yourself.",
+  "cuaPermission.upgradeReminder":
+    "The app was updated or moved. Computer Use permissions may need to be checked again.",
+  "cuaPermission.upgradeReminder.check": "Check permissions",
   "settings.computerUse.native.windowsHint":
     "Requires an unlocked interactive desktop. Elevated windows, the UAC secure desktop, and the lock screen may be inaccessible. Reinstall the full application if native resources are missing.",
   "settings.computerUse.composerEntry.label": "Show Computer Use button in the composer",

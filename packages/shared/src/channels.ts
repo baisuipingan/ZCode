@@ -85,6 +85,7 @@ import type {
 import type { BrowserViewportSize } from "./browser-use/command-metadata.js";
 import type {
   CuaAccessibilitySettingsResult,
+  CuaApplicationInfo,
   OpenCuaPermissionOnboardingOptions,
   PrepareCuaHelperPermissionDragResult,
 } from "./cuaAccessibilitySettings.js";
@@ -374,7 +375,11 @@ export const PlatformChannels = {
   OpenInFileManager: "zcode:open-in-file-manager",
   /** Renderer → Main：使用系统默认应用打开本地文件 */
   OpenExternalFile: "zcode:open-external-file",
-  /** Renderer → Main：打开 ZCode Computer Use 权限引导 */
+  /** Renderer → Main：只读查询当前打包 macOS 应用身份 */
+  GetCuaApplicationInfo: "zcode:get-cua-application-info",
+  /** Renderer → Main：仅在 Finder 选中当前打包 macOS 应用，不接受目标路径 */
+  RevealCuaApplication: "zcode:reveal-cua-application",
+  /** Renderer → Main：打开 MiloCode Computer Use 权限引导 */
   OpenCuaPermissionOnboarding: "zcode:open-cua-permission-onboarding",
   /** Renderer → Main：取消当前 renderer 发起的一次权限引导 participant */
   CancelCuaPermissionOnboarding: "zcode:cancel-cua-permission-onboarding",
@@ -1086,6 +1091,14 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.OpenExternalFile]: {
     request: string;
+    response: { success: boolean; error?: string };
+  };
+  [PlatformChannels.GetCuaApplicationInfo]: {
+    request: undefined;
+    response: CuaApplicationInfo | null;
+  };
+  [PlatformChannels.RevealCuaApplication]: {
+    request: undefined;
     response: { success: boolean; error?: string };
   };
   [PlatformChannels.OpenCuaPermissionOnboarding]: {

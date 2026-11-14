@@ -231,6 +231,7 @@ export type {
   DesktopCommandId,
   CuaOsSupport,
   DesktopWindowChromeState,
+  DesktopZoomState,
   DesktopTitleBarTheme,
   DockerContainerInfo,
   EditorInfo,
@@ -262,11 +263,13 @@ export type {
   UpdateCheckResultPayload,
   UpdateStatePayload,
   WSLDistro,
+  WindowControlsOverlayMetrics,
   WindowControlsOverlayReadyPayload,
   ZCodeStdioTapDevState,
 } from "./platform.js";
 export type {
   CuaAccessibilitySettingsResult,
+  CuaApplicationInfo,
   CuaPermissionKind,
   OpenCuaPermissionOnboardingOptions,
   PrepareCuaHelperPermissionDragResult,

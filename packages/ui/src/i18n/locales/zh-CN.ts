@@ -8035,12 +8035,29 @@ const zhCN: Record<string, string> = {
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",
   "settings.computerUse.native.title": "本机执行器",
+  "settings.computerUse.native.description": "MiloCode 内置的电脑控制组件，无需另外安装。",
   "settings.computerUse.native.detected": "已检测到",
   "settings.computerUse.native.unavailable": "不可用",
   "settings.computerUse.native.refresh": "刷新状态",
+  "settings.computerUse.native.checkPermissions": "检测权限",
+  "settings.computerUse.native.details": "技术详情",
   "settings.computerUse.native.unconfirmed": "尚未确认原生执行器状态，请刷新检查当前版本。",
   "settings.computerUse.native.macHint":
-    "请在系统设置中允许辅助功能和屏幕录制。系统列表可能显示 MiloCode、agent-desktop 或其原生执行程序，请按实际条目授权。刷新只读取状态，不会请求授权、截图或输入。",
+    "辅助功能用于操作键鼠和读取界面，屏幕录制用于截图。检测只读取授权状态，不会请求授权、截图或输入。",
+  "settings.computerUse.application.title": "当前授权应用",
+  "settings.computerUse.application.loading": "正在确认当前应用…",
+  "settings.computerUse.application.reveal": "定位当前应用",
+  "settings.computerUse.application.unavailable":
+    "暂时无法确认当前应用位置，请使用已安装的完整 MiloCode 客户端。",
+  "settings.computerUse.application.hint":
+    "请授权上方路径的 MiloCode。点击下方对应权限的按钮，会打开系统设置并在 Finder 中定位这份应用；无需另行添加内部执行器。建议安装到“应用程序”，避免多份同名应用混淆。",
+  "settings.computerUse.application.reauthorizeTitle": "当前应用尚未通过全部授权",
+  "settings.computerUse.application.reauthorizeHint":
+    "更新、重新签名或移动应用后，旧授权可能不再适用。如果系统开关已开启但这里仍未通过，请在对应权限列表移除旧 MiloCode 条目，再添加上方路径的当前应用并开启；辅助功能和屏幕录制需分别允许。",
+  "settings.computerUse.application.restartHint":
+    "授权后返回此页会自动重新检测。如果系统提示需要重新打开应用，请先结束或保存当前任务，再自行退出并打开 MiloCode。",
+  "cuaPermission.upgradeReminder": "应用已更新或位置已改变，电脑控制授权可能需要重新确认。",
+  "cuaPermission.upgradeReminder.check": "检查授权",
   "settings.computerUse.native.windowsHint":
     "仅支持当前已解锁的交互桌面。管理员权限窗口、UAC 安全桌面和锁屏可能无法控制；缺少原生资源时请重新安装完整版本。",
   "settings.computerUse.composerEntry.label": "在输入框显示电脑操作按钮",

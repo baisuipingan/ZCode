@@ -67,6 +67,14 @@ export function createDesktopPlatform(options: {
     canOpenCommunity: (locale) => window.zcode.canOpenCommunity(locale),
     openInFileManager: (path) => window.zcode.openInFileManager(path),
     openExternalFile: (path) => window.zcode.openExternalFile(path),
+    getCuaApplicationInfo: window.zcode.getCuaApplicationInfo
+      ? () => window.zcode.getCuaApplicationInfo?.() ?? Promise.resolve(null)
+      : undefined,
+    revealCuaApplication: window.zcode.revealCuaApplication
+      ? () =>
+          window.zcode.revealCuaApplication?.() ??
+          Promise.resolve({ success: false, error: "not_supported" })
+      : undefined,
     openCuaPermissionOnboarding: window.zcode.openCuaPermissionOnboarding
       ? (permissionOptions) =>
           window.zcode.openCuaPermissionOnboarding?.(permissionOptions) ??

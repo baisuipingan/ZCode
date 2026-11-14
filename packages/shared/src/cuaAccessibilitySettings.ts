@@ -1,5 +1,14 @@
 export type CuaPermissionKind = "accessibility" | "screen_recording";
 
+/** Desktop main 读取的当前打包 macOS 应用；不代表系统权限已获准。 */
+export interface CuaApplicationInfo {
+  appName: string;
+  appVersion: string;
+  appPath: string;
+  /** 位置、版本及代码签名组成的不透明身份；签名不可读取时为 null。 */
+  identity: string | null;
+}
+
 export interface OpenCuaPermissionOnboardingOptions {
   /** Renderer 为本次调用生成的不透明 id；关闭该权限 surface 时只取消这一 participant。 */
   operationId?: string;

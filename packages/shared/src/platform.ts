@@ -40,6 +40,7 @@ import type {
 import type { RendererHeapSample } from "./validation.js";
 import type {
   CuaAccessibilitySettingsResult,
+  CuaApplicationInfo,
   OpenCuaPermissionOnboardingOptions,
   PrepareCuaHelperPermissionDragResult,
 } from "./cuaAccessibilitySettings.js";
@@ -920,7 +921,13 @@ export interface IPlatformService {
   /** 使用系统默认应用打开本地文件；普通 Web 平台返回 unsupported。 */
   openExternalFile?(path: string): Promise<{ success: boolean; error?: string }>;
 
-  /** 打开 ZCode Computer Use 的完整权限引导。Desktop only。 */
+  /** 只读查询当前打包 macOS 应用；不读取 TCC 或请求系统权限。 */
+  getCuaApplicationInfo?(): Promise<CuaApplicationInfo | null>;
+
+  /** 仅在 Finder 选中 main 确认的当前 macOS 应用，不启动应用或打开系统设置。 */
+  revealCuaApplication?(): Promise<{ success: boolean; error?: string }>;
+
+  /** 打开 MiloCode Computer Use 的完整权限引导。Desktop only。 */
   openCuaPermissionOnboarding?(
     options?: OpenCuaPermissionOnboardingOptions,
   ): Promise<CuaAccessibilitySettingsResult>;

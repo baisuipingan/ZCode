@@ -1,9 +1,9 @@
 // Computer Use 设置只投影插件 store 和只读原生状态；授权交给系统设置，不再编排私有 Helper 恢复链。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { CuaPermissionKind, RemoteTarget } from "@zcode/shared";
+import type { CuaApplicationInfo, CuaPermissionKind, RemoteTarget } from "@zcode/shared";
 import { isRemoteWorkspaceIdentity, ZCODE_CUA_OFFICIAL_PLUGIN_ID } from "@zcode/shared";
 import { isCuaPermissionStatusAvailable, type CuaPermissionState } from "@zcode/services";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, FolderOpen, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { Switch } from "@/components/ui/switch.js";
 import { toast } from "@/components/ui/toast.js";
@@ -18,6 +18,7 @@ import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/Settin
 import { StatusDot, type StatusDotTone } from "@/settings/StatusDot.js";
 import { runAfterSuccessfulPluginEnabledChange } from "@/settings/pluginEnabledChange.js";
 import { resolveComputerUseAvailability } from "@/settings/computerUseAvailability.js";
+import { logger } from "@/logger.js";
 
 interface ComputerUseSectionProps {
   isDesktop?: boolean;
@@ -73,7 +74,7 @@ export function ComputerUseSection({
   const cuaToggling = togglingPluginId === ZCODE_CUA_OFFICIAL_PLUGIN_ID;
   const path = supportsComputerUseSettings ? (localWorkspacePath ?? workspacePath) : null;
   // Windows 也查询原生执行器；插件关闭、远端和 Web 均不触发本机状态查询。
-  const { status, refresh } = useCuaPermissionStatus(
+  const { status, fresh, refresh } = useCuaPermissionStatus(
     cuaEnabled && !cuaToggling ? (path ?? null) : null,
     workspaceIdentity,
   );
@@ -83,6 +84,30 @@ export function ComputerUseSection({
   const nativeStatus = status?.provider === "agent-desktop" ? status : null;
   const availableStatus =
     nativeStatus && isCuaPermissionStatusAvailable(nativeStatus) ? nativeStatus : null;
+  const [applicationInfo, setApplicationInfo] = useState<CuaApplicationInfo | null | undefined>();
+  useEffect(() => {
+    let disposed = false;
+    setApplicationInfo(undefined);
+    if (supportsLocalMacWorkspace && cuaEnabled && platform.getCuaApplicationInfo) {
+      // 系统授权属于当前运行 App 的签名；同名旧 App 或内部 CLI 路径不能作为授权目标。
+      void platform.getCuaApplicationInfo().then(
+        (info) => {
+          if (!disposed) setApplicationInfo(info);
+        },
+        (error: unknown) => {
+          if (!disposed) {
+            setApplicationInfo(null);
+            logger.warn("[ComputerUse] 无法读取当前授权应用", { error });
+          }
+        },
+      );
+    } else {
+      setApplicationInfo(null);
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [cuaEnabled, platform, supportsLocalMacWorkspace]);
 
   const mountedRef = useRef(true);
   const pluginToggleGenerationRef = useRef(0);
@@ -109,6 +134,21 @@ export function ComputerUseSection({
     permissionOperationRef.current = null;
     setOpeningPermission(null);
   }, [contextKey]);
+
+  const revealApplication = async () => {
+    if (!applicationInfo || !platform.revealCuaApplication) return;
+    try {
+      const result = await platform.revealCuaApplication();
+      if (!result.success) throw new Error(result.error ?? "unavailable");
+    } catch (error) {
+      toast(
+        intl.formatMessage(
+          { id: "chat.cuaPermission.openFailed" },
+          { error: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  };
 
   const initRef = useRef<string | null>(null);
   useEffect(() => {
@@ -202,7 +242,7 @@ export function ComputerUseSection({
             ),
           );
         }
-        // 系统设置返回后也只读刷新；原生 runtime 持有进程和权限，不走旧 Helper restart。
+        // 打开面板不代表已授权；此处及返回窗口的 focus 事件都只读刷新，不自动重启。
         refresh();
       } catch (error) {
         if (isCurrent())
@@ -317,7 +357,7 @@ export function ComputerUseSection({
               onClick={() => void openPermissionSettings(kind)}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
-              <span className="hidden sm:inline">
+              <span>
                 {intl.formatMessage({
                   id: openingPermission === kind ? "chat.cuaPermission.opening" : actionId,
                 })}
@@ -384,10 +424,46 @@ export function ComputerUseSection({
       </SettingsGroupCard>
       {cuaEnabled ? (
         <SettingsGroupCard>
+          {supportsLocalMacWorkspace ? (
+            <>
+              <SettingsRow
+                controlLayout="wide"
+                label={intl.formatMessage({ id: "settings.computerUse.application.title" })}
+                description={
+                  applicationInfo
+                    ? `${applicationInfo.appName} ${applicationInfo.appVersion}`
+                    : intl.formatMessage({
+                        id:
+                          applicationInfo === undefined
+                            ? "settings.computerUse.application.loading"
+                            : "settings.computerUse.application.unavailable",
+                      })
+                }
+                control={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!applicationInfo || !platform.revealCuaApplication}
+                    onClick={() => void revealApplication()}
+                  >
+                    <FolderOpen className="size-4" aria-hidden="true" />
+                    {intl.formatMessage({ id: "settings.computerUse.application.reveal" })}
+                  </Button>
+                }
+              />
+              <div className="space-y-2 border-t border-border px-4 py-3 text-ui-sm text-foreground-subtle">
+                {applicationInfo ? (
+                  <p className="break-all font-mono select-text">{applicationInfo.appPath}</p>
+                ) : null}
+                <p>{intl.formatMessage({ id: "settings.computerUse.application.hint" })}</p>
+              </div>
+            </>
+          ) : null}
           <SettingsRow
             controlLayout="wide"
             label={intl.formatMessage({ id: "settings.computerUse.native.title" })}
-            description="agent-desktop"
+            description={intl.formatMessage({ id: "settings.computerUse.native.description" })}
             control={badge(
               availableStatus ? "green" : nativeStatus ? "red" : "muted",
               intl.formatMessage({
@@ -407,14 +483,15 @@ export function ComputerUseSection({
                 onClick={() => refresh()}
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
-                {intl.formatMessage({ id: "settings.computerUse.native.refresh" })}
+                {intl.formatMessage({
+                  id: supportsLocalMacWorkspace
+                    ? "settings.computerUse.native.checkPermissions"
+                    : "settings.computerUse.native.refresh",
+                })}
               </Button>
             }
           />
           <div className="space-y-2 border-t border-border px-4 py-3 text-ui-sm text-foreground-subtle">
-            {availableStatus?.binaryPath ? (
-              <p className="break-all font-mono select-text">{availableStatus.binaryPath}</p>
-            ) : null}
             {!nativeStatus ? (
               <p>{intl.formatMessage({ id: "settings.computerUse.native.unconfirmed" })}</p>
             ) : nativeStatus.reason ? (
@@ -427,6 +504,15 @@ export function ComputerUseSection({
                   : "settings.computerUse.native.windowsHint",
               })}
             </p>
+            {availableStatus?.binaryPath ? (
+              <details>
+                <summary className="cursor-pointer">
+                  {intl.formatMessage({ id: "settings.computerUse.native.details" })}
+                </summary>
+                <p className="mt-2">agent-desktop</p>
+                <p className="break-all font-mono select-text">{availableStatus.binaryPath}</p>
+              </details>
+            ) : null}
           </div>
           {supportsLocalMacWorkspace && availableStatus ? (
             <>
@@ -444,6 +530,30 @@ export function ComputerUseSection({
                 "cuaPermission.perm.screenRecording.purpose",
                 "chat.cuaPermission.openScreenRecording",
               )}
+              {fresh &&
+              (availableStatus.accessibility !== "granted" ||
+                availableStatus.screenRecording !== "granted") ? (
+                <div className="border-t border-border px-4 py-3 text-ui-sm">
+                  <div
+                    role="status"
+                    className="space-y-1 rounded-lg bg-warning-surface p-3 text-warning-surface-foreground"
+                  >
+                    <p className="font-medium">
+                      {intl.formatMessage({
+                        id: "settings.computerUse.application.reauthorizeTitle",
+                      })}
+                    </p>
+                    <p>
+                      {intl.formatMessage({
+                        id: "settings.computerUse.application.reauthorizeHint",
+                      })}
+                    </p>
+                    <p>
+                      {intl.formatMessage({ id: "settings.computerUse.application.restartHint" })}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </>
           ) : null}
         </SettingsGroupCard>

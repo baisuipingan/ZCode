@@ -1,10 +1,17 @@
 /* eslint-disable max-lines -- 权限频道注册、拖拽浮窗与前台应用返回等待共享同一 main 进程会话状态 */
 import { execFile } from "node:child_process";
-import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { app, BrowserWindow, ipcMain, nativeImage, screen, shell } from "electron";
 import { resolveAgentDesktopResources } from "../../scripts/agent-desktop/config.mjs";
-import { PlatformChannels, type CuaPermissionKind, type Locale } from "@zcode/shared";
+import {
+  PlatformChannels,
+  type CuaApplicationInfo,
+  type CuaPermissionKind,
+  type Locale,
+} from "@zcode/shared";
 import {
   cuaHelperBundleFingerprintUnchanged,
   openCuaPermissionOnboarding,
@@ -20,6 +27,60 @@ import { resolveDesktopAppIconPath } from "./desktopWindowChromeState.js";
 
 const execFileAsync = promisify(execFile);
 const MACOS_SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences";
+const CUA_APPLICATION_SIGNATURE_TIMEOUT_MS = 2_000;
+const CUA_APPLICATION_SIGNATURE_MAX_BYTES = 64 * 1024;
+let currentCuaApplicationInfo: Promise<CuaApplicationInfo | null> | undefined;
+
+/** 当前进程是应用身份的唯一来源，不按同名查找 /Applications 或接受 renderer 传入路径。 */
+function getCurrentCuaApplicationInfo(): Promise<CuaApplicationInfo | null> {
+  currentCuaApplicationInfo ??= readCurrentCuaApplicationInfo();
+  return currentCuaApplicationInfo;
+}
+
+async function readCurrentCuaApplicationInfo(): Promise<CuaApplicationInfo | null> {
+  if (process.platform !== "darwin" || !app.isPackaged) return null;
+  let appPath: string;
+  try {
+    const executable = await realpath(app.getPath("exe"));
+    const macOSDirectory = dirname(executable);
+    const contentsDirectory = dirname(macOSDirectory);
+    appPath = dirname(contentsDirectory);
+    if (
+      basename(macOSDirectory) !== "MacOS" ||
+      basename(contentsDirectory) !== "Contents" ||
+      !basename(appPath).endsWith(".app")
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const info: CuaApplicationInfo = {
+    appName: app.getName(),
+    appVersion: app.getVersion(),
+    appPath,
+    identity: null,
+  };
+  try {
+    const { stdout, stderr } = await execFileAsync("/usr/bin/codesign", ["-d", "-r-", appPath], {
+      encoding: "utf8",
+      timeout: CUA_APPLICATION_SIGNATURE_TIMEOUT_MS,
+      maxBuffer: CUA_APPLICATION_SIGNATURE_MAX_BYTES,
+    });
+    const requirement = `${stdout}\n${stderr}`
+      .match(/^#?[ \t]*designated[ \t]*=>[ \t]*(\S[^\r\n]*)$/m)?.[1]
+      ?.trim();
+    if (requirement) {
+      // 同名 ad-hoc 新包的 requirement 会变；仅比较版本或 Bundle ID 会误把旧授权当作当前授权。
+      info.identity = createHash("sha256")
+        .update(JSON.stringify([info.appPath, info.appVersion, requirement]))
+        .digest("hex");
+    }
+  } catch {
+    // 签名不可读取时保留真实位置供手动授权，不伪造可用于更新提醒的身份。
+  }
+  return info;
+}
 // 1x1 透明 PNG。startDrag 在 macOS 上要求 icon 非空（electron.d.ts: "The image must be non-empty
 // on macOS"），连随包 ZCode 图标都读不到时用它兜底 —— 否则 startDrag 抛异常，用户完全拖不动。
 const CUA_HELPER_DRAG_ICON_DATA_URL =
@@ -309,6 +370,25 @@ export function registerCuaPermissionIpcHandlers(options: {
   const onboardingControllers = new Map<string, AbortController>();
   const operationKey = (senderId: number, operationId: string) => `${senderId}\0${operationId}`;
 
+  ipcMain.handle(PlatformChannels.GetCuaApplicationInfo, () => getCurrentCuaApplicationInfo());
+  ipcMain.handle(PlatformChannels.RevealCuaApplication, async () => {
+    try {
+      const applicationInfo = await getCurrentCuaApplicationInfo();
+      if (!applicationInfo) {
+        return {
+          success: false,
+          error:
+            "Cannot locate the currently running MiloCode.app. Open the installed macOS application and try again.",
+        };
+      }
+      // 通用打开路径在 macOS 会执行 open appPath，从而启动应用；定位授权目标只能揭示当前 .app。
+      shell.showItemInFolder(applicationInfo.appPath);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // 已验证的 Helper.app 路径 + 字节指纹缓存。原生文件拖拽必须在 dragstart 事件链路里*同步*调用
   // event.sender.startDrag()，不能等 install/verify 这类异步 I/O（否则错过 OS 拖拽手势窗口，用户
   // 拖不出任何文件）。所以浮窗挂载时先 prepare 预热，dragstart 只读缓存 + 微秒级同步指纹比对。
@@ -451,9 +531,17 @@ export function registerCuaPermissionIpcHandlers(options: {
         };
       }
       try {
-        // Vercel 使用原生 CLI/sidecar，不存在旧私有 Helper.app。只打开用户选中的
-        // 系统面板并展示真实资源；不伪造授权完成、重启旧 Helper 或更改系统权限。
-        shell.showItemInFolder(nativeDesktop.binaryPath);
+        const applicationInfo = await getCurrentCuaApplicationInfo();
+        if (!applicationInfo) {
+          return {
+            success: false,
+            error:
+              "Cannot locate the currently running MiloCode.app. Open the installed macOS application and try again.",
+          };
+        }
+        // TCC 实际归属主应用；定位内部 CLI 会引导用户给错对象。只定位当前进程的 .app，
+        // 不按同名寻找旧安装版、不自动授权或重启，也不把打开设置当作授权成功。
+        shell.showItemInFolder(applicationInfo.appPath);
         await shell.openExternal(
           `x-apple.systempreferences:com.apple.preference.security?${
             kind === "accessibility" ? "Privacy_Accessibility" : "Privacy_ScreenCapture"

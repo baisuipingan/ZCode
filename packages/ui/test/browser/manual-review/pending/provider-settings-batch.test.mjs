@@ -12,6 +12,7 @@ import { registerProviderPresentationCases } from "./provider-settings-presentat
 import { registerProviderModelEditorCases } from "./provider-model-editor-cases.mjs";
 import { registerProgressiveModelEditorCases } from "./provider-model-editor-progressive-cases.mjs";
 import { registerOffPeakEligibilityCases } from "./offpeak-eligibility-cases.mjs";
+import { registerCuaApplicationReminderCases } from "./cua-application-reminder-cases.mjs";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/provider-settings-batch.fixture.tsx";
@@ -65,6 +66,7 @@ registerOffPeakEligibilityCases(() => ({ browser, origin }));
 registerProviderPresentationCases(() => ({ browser, origin, artifacts }));
 registerProviderModelEditorCases(() => ({ browser, origin, artifacts }));
 registerProgressiveModelEditorCases(() => ({ browser, origin, artifacts }));
+registerCuaApplicationReminderCases(() => ({ browser, origin }));
 
 const nativeCuaStatus = {
   available: true,
@@ -74,9 +76,22 @@ const nativeCuaStatus = {
   accessibility: "denied",
   screenRecording: "denied",
 };
+const currentCuaApplication = {
+  appName: "MiloCode",
+  appVersion: "3.17.8",
+  appPath: "/Applications/MiloCode.app",
+  identity: "signed-build-3-17-8",
+};
 async function openComputerUseFixture(
   target,
-  { enabled = true, status = nativeCuaStatus, width = 1200, failToggle = false } = {},
+  {
+    enabled = true,
+    status = nativeCuaStatus,
+    width = 1200,
+    failToggle = false,
+    application = currentCuaApplication,
+    theme = width === 390 ? "light" : "dark",
+  } = {},
 ) {
   const page = await browser.newPage({ viewport: { width, height: 1000 } });
   const calls = [];
@@ -86,11 +101,17 @@ async function openComputerUseFixture(
     calls.push(request);
     await route.fulfill({
       status: failToggle && request.action === "toggle" ? 500 : 200,
-      body: JSON.stringify(request.action === "status" ? currentStatus : {}),
+      body: JSON.stringify(
+        request.action === "status"
+          ? currentStatus
+          : request.action === "application-info"
+            ? application
+            : {},
+      ),
     });
   });
   await page.goto(
-    `${origin}fixture?${new URLSearchParams({ computerUse: target, cuaEnabled: String(enabled), locale: "en-US", theme: width === 390 ? "light" : "dark" })}`,
+    `${origin}fixture?${new URLSearchParams({ computerUse: target, cuaEnabled: String(enabled), locale: "en-US", theme })}`,
   );
   return {
     page,
@@ -100,72 +121,144 @@ async function openComputerUseFixture(
     },
   };
 }
-for (const width of [390, 1200]) {
-  test(`Computer Use native macOS permissions and explicit settings ${width}`, async () => {
-    const { page, calls, setStatus } = await openComputerUseFixture("mac", { width });
-    try {
-      await page.getByText("/fixture/native/agent-desktop", { exact: true }).waitFor();
-      assert.equal(await page.getByText("Missing", { exact: true }).count(), 2);
-      const permissionOpened = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/cua-rpc") &&
-          response.request().postDataJSON().action === "open-permission",
-      );
-      await page.getByRole("button", { name: "Open Accessibility Settings", exact: true }).click();
-      await permissionOpened;
-      const opened = calls.find((call) => call.action === "open-permission");
-      assert.deepEqual(opened?.payload, {
-        initialPermission: "accessibility",
-        requiredPermissions: ["accessibility"],
-      });
-      assert.ok(
-        calls
-          .filter((call) => call.action === "status")
-          .every((call) => call.payload.options?.includeFunctionalProbes !== true),
-      );
-      assert.equal(calls.filter((call) => call.action === "forbidden-restart").length, 0);
-      assert.equal(
-        await page.getByRole("button", { name: "Restart Helper", exact: true }).count(),
-        0,
-      );
-      setStatus({ ...nativeCuaStatus, accessibility: "granted", screenRecording: "granted" });
-      await page.getByRole("button", { name: "Refresh status", exact: true }).click();
-      await page.getByText("Granted", { exact: true }).first().waitFor();
-      assert.equal(await page.getByText("Granted", { exact: true }).count(), 2);
-      const settingsSaved = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/cua-rpc") &&
-          response.request().postDataJSON().action === "settings",
-      );
-      await page
-        .getByRole("switch", { name: "Show Computer Use button in the composer", exact: true })
-        .click();
-      await settingsSaved;
-      await page
-        .getByRole("switch", {
-          name: "Show Computer Use button in the composer",
-          exact: true,
-          checked: true,
-        })
-        .waitFor();
-      assert.deepEqual(calls.find((call) => call.action === "settings")?.payload, {
-        computerUseComposerEntryHidden: false,
-      });
-      const geometry = await page.evaluate(() => ({
-        width: innerWidth,
-        scroll: document.documentElement.scrollWidth,
-      }));
-      assert.ok(geometry.scroll <= geometry.width, "Computer Use settings overflow horizontally");
-      await mkdir(artifacts, { recursive: true });
-      await page.screenshot({
-        path: join(artifacts, `computer-use-native-${width}.png`),
-        fullPage: true,
-      });
-    } finally {
-      await page.close();
-    }
-  });
-}
+test("Computer Use reveals the current app instead of its native executor", async () => {
+  const { page, calls } = await openComputerUseFixture("mac");
+  try {
+    await page
+      .getByText(currentCuaApplication.appPath, { exact: true })
+      .waitFor({ timeout: 5_000 });
+    await page.getByText(/3\.17\.8/).waitFor();
+    const revealed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/cua-rpc") &&
+        response.request().postDataJSON().action === "reveal-application",
+    );
+    await page.getByRole("button", { name: "Reveal current app", exact: true }).click();
+    await revealed;
+    assert.deepEqual(calls.find((call) => call.action === "reveal-application")?.payload, {});
+    assert.equal(
+      await page.getByText("/fixture/native/agent-desktop", { exact: true }).isVisible(),
+      false,
+    );
+  } finally {
+    await page.close();
+  }
+});
+for (const width of [390, 1200])
+  for (const theme of ["light", "dark"]) {
+    test(`Computer Use native macOS permissions and explicit settings ${width}/${theme}`, async () => {
+      const { page, calls, setStatus } = await openComputerUseFixture("mac", { width, theme });
+      try {
+        await page.getByText(currentCuaApplication.appPath, { exact: true }).waitFor();
+        await page.getByText("This app still needs permissions", { exact: true }).waitFor();
+        await mkdir(artifacts, { recursive: true });
+        await page.screenshot({
+          path: join(artifacts, `computer-use-permission-${width}-${theme}.png`),
+          fullPage: true,
+        });
+        await page.getByText("Technical details", { exact: true }).click();
+        await page.getByText("/fixture/native/agent-desktop", { exact: true }).waitFor();
+        assert.equal(await page.getByText("Missing", { exact: true }).count(), 2);
+        await page.getByRole("button", { name: "Check permissions", exact: true }).waitFor();
+        const permissionOpened = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/cua-rpc") &&
+            response.request().postDataJSON().action === "open-permission",
+        );
+        await page
+          .getByRole("button", { name: "Open Accessibility Settings", exact: true })
+          .click();
+        await permissionOpened;
+        const opened = calls.find((call) => call.action === "open-permission");
+        assert.deepEqual(opened?.payload, {
+          initialPermission: "accessibility",
+          requiredPermissions: ["accessibility"],
+        });
+        const screenOpened = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/cua-rpc") &&
+            response.request().postDataJSON().payload?.initialPermission === "screen_recording",
+        );
+        await page.getByRole("button", { name: "Open Screen Recording", exact: true }).click();
+        await screenOpened;
+        assert.deepEqual(
+          calls.find((call) => call.payload?.initialPermission === "screen_recording")?.payload,
+          {
+            initialPermission: "screen_recording",
+            requiredPermissions: ["screen_recording"],
+          },
+        );
+        assert.ok(
+          calls
+            .filter((call) => call.action === "status")
+            .every((call) => call.payload.options?.includeFunctionalProbes !== true),
+        );
+        assert.equal(calls.filter((call) => call.action === "forbidden-restart").length, 0);
+        assert.equal(
+          await page.getByRole("button", { name: "Restart Helper", exact: true }).count(),
+          0,
+        );
+        setStatus({ ...nativeCuaStatus, accessibility: "granted", screenRecording: "granted" });
+        // 模拟用户从系统设置切回当前窗口，复用真实hook的focus重查，而不是主动按钮代替。
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await page.getByText("Granted", { exact: true }).first().waitFor();
+        assert.equal(await page.getByText("Granted", { exact: true }).count(), 2);
+        const settingsSaved = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/cua-rpc") &&
+            response.request().postDataJSON().action === "settings",
+        );
+        await page
+          .getByRole("switch", { name: "Show Computer Use button in the composer", exact: true })
+          .click();
+        await settingsSaved;
+        await page
+          .getByRole("switch", {
+            name: "Show Computer Use button in the composer",
+            exact: true,
+            checked: true,
+          })
+          .waitFor();
+        assert.deepEqual(calls.find((call) => call.action === "settings")?.payload, {
+          computerUseComposerEntryHidden: false,
+        });
+        const geometry = await page.evaluate(() => ({
+          width: innerWidth,
+          scroll: document.documentElement.scrollWidth,
+        }));
+        assert.ok(geometry.scroll <= geometry.width, "Computer Use settings overflow horizontally");
+        await mkdir(artifacts, { recursive: true });
+        await page.screenshot({
+          path: join(artifacts, `computer-use-native-${width}-${theme}.png`),
+          fullPage: true,
+        });
+      } finally {
+        await page.close();
+      }
+    });
+  }
+test("Computer Use unknown app location is explicit and cannot reveal an executor as its owner", async () => {
+  const { page, calls } = await openComputerUseFixture("mac", { application: null });
+  try {
+    await page
+      .getByText(
+        "The current app location could not be confirmed. Use the complete installed MiloCode client.",
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(
+      await page.getByRole("button", { name: "Reveal current app", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(
+      await page.getByText("/fixture/native/agent-desktop", { exact: true }).isVisible(),
+      false,
+    );
+    assert.equal(calls.filter((call) => call.action === "reveal-application").length, 0);
+  } finally {
+    await page.close();
+  }
+});
 test("Computer Use Windows reports missing resources and hides macOS permissions", async () => {
   const { page, calls, setStatus } = await openComputerUseFixture("windows", {
     status: {
@@ -184,6 +277,7 @@ test("Computer Use Windows reports missing resources and hides macOS permissions
     await page.getByText(/UAC/).waitFor();
     setStatus({ ...nativeCuaStatus, accessibility: "granted", screenRecording: "granted" });
     await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await page.getByText("Technical details", { exact: true }).click();
     await page.getByText("/fixture/native/agent-desktop", { exact: true }).waitFor();
     await page.getByRole("switch", { name: "Enable Computer Use", exact: true }).click();
     await page
@@ -195,6 +289,7 @@ test("Computer Use Windows reports missing resources and hides macOS permissions
       ).length,
       0,
     );
+    assert.equal(calls.filter((call) => call.action === "application-info").length, 0);
   } finally {
     await page.close();
   }
@@ -205,7 +300,7 @@ test("Computer Use plugin failure rolls back without permission side effects", a
     const toggle = page.getByRole("switch", { name: "Enable Computer Use", exact: true });
     await toggle.waitFor();
     assert.equal(
-      await page.getByRole("button", { name: "Refresh status", exact: true }).count(),
+      await page.getByRole("button", { name: /Refresh status|Check permissions/ }).count(),
       0,
     );
     assert.equal(calls.filter((call) => call.action === "status").length, 0);

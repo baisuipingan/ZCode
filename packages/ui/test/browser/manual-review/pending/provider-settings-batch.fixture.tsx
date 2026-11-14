@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { parseZCodeBuiltinModelConfigRules } from "@zcode/provider";
 import type { IServiceAccessor, ProviderSettingsView } from "@zcode/services";
@@ -32,6 +32,10 @@ import type { AppSettings, IPlatformService } from "@zcode/shared";
 import { ZCODE_CUA_OFFICIAL_PLUGIN_ID } from "@zcode/shared";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
+import { CuaApplicationUpgradeReminderAttachment } from "@/cua-permission/CuaPermissionObservationAttachment.js";
+import { TabStoreProvider, useTabStoreApi } from "@/store/TabStoreProvider.js";
+import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
+import { fetchCuaPermissionStatus } from "@/lib/cuaPermissionStatusStore.js";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.className =
@@ -272,10 +276,13 @@ const cuaServices = {
     },
   },
   pluginManagementService: {
-    listPlugins: async () => ({
-      plugins: [{ id: ZCODE_CUA_OFFICIAL_PLUGIN_ID, enabled: cuaEnabled }],
-      diagnostics: [],
-    }),
+    listPlugins: async () => {
+      if (params.has("cuaReminder")) await cuaRpc("list-plugins");
+      return {
+        plugins: [{ id: ZCODE_CUA_OFFICIAL_PLUGIN_ID, enabled: cuaEnabled }],
+        diagnostics: [],
+      };
+    },
     getPluginsOverview: async () => ({
       marketplaces: [],
       availablePlugins: [],
@@ -299,6 +306,11 @@ const cuaServices = {
   },
 } as unknown as IServiceAccessor;
 const cuaPlatform = {
+  getCuaApplicationInfo: async () => cuaRpc("application-info"),
+  revealCuaApplication: async () => {
+    await cuaRpc("reveal-application");
+    return { success: true };
+  },
   openCuaPermissionOnboarding: async (options: unknown) => {
     await cuaRpc("open-permission", options);
     return { success: true };
@@ -323,6 +335,68 @@ function ComputerUseFixture() {
     </ServiceProvider>
   );
 }
+function CuaReminderFixtureContent() {
+  const tabs = useTabStoreApi();
+  const [ready, setReady] = useState(false);
+  const [mounted, setMounted] = useState(true);
+  const activeTabId = tabs((state) => state.activeTabId);
+  useEffect(() => {
+    const workspacePath = "/fixture/workspace";
+    const remote = params.get("computerUse") === "remote";
+    tabs.getState().addTab(workspacePath, remote ? { remoteSessionId: "fixture-remote" } : {});
+    usePluginManagementStore.setState({
+      workspacePath,
+      workspaceIdentity: null,
+      configScope: params.get("configScope") === "user" ? "user" : null,
+      loading: false,
+      plugins: [{ id: ZCODE_CUA_OFFICIAL_PLUGIN_ID, enabled: cuaEnabled }] as never,
+      togglingPluginId: null,
+    });
+    Object.assign(window, {
+      __setReminderMounted: setMounted,
+      __setReminderPluginEnabled: (enabled: boolean) =>
+        usePluginManagementStore.setState({
+          plugins: [{ id: ZCODE_CUA_OFFICIAL_PLUGIN_ID, enabled }] as never,
+        }),
+      __setReminderEffectiveScope: () => usePluginManagementStore.setState({ configScope: null }),
+    });
+    void (async () => {
+      if (params.get("freshGranted") === "true") {
+        await fetchCuaPermissionStatus({
+          service: cuaServices.cuaPermissionService!,
+          workspacePath,
+          mode: "refresh",
+          options: { includeFunctionalProbes: false },
+        });
+      }
+      setReady(true);
+    })();
+  }, [tabs]);
+  return (
+    <main className="min-h-screen bg-background p-4 text-foreground">
+      <output data-testid="reminder-ready">{String(ready)}</output>
+      <output data-testid="reminder-active-tab">{activeTabId}</output>
+      {ready && mounted ? <CuaApplicationUpgradeReminderAttachment /> : null}
+    </main>
+  );
+}
+function CuaReminderFixture() {
+  return (
+    <ServiceProvider services={cuaServices}>
+      <PlatformProvider
+        platform={
+          params.get("computerUse") === "web"
+            ? { ...cuaPlatform, openCuaPermissionOnboarding: undefined }
+            : cuaPlatform
+        }
+      >
+        <TabStoreProvider>
+          <CuaReminderFixtureContent />
+        </TabStoreProvider>
+      </PlatformProvider>
+    </ServiceProvider>
+  );
+}
 createRoot(document.getElementById("root")!).render(
   <ServiceProvider
     services={
@@ -339,7 +413,9 @@ createRoot(document.getElementById("root")!).render(
   >
     <TooltipProvider>
       <ZCodeIntlProvider initialLocale={params.get("locale") === "zh-CN" ? "zh-CN" : "en-US"}>
-        {params.has("computerUse") ? (
+        {params.has("cuaReminder") ? (
+          <CuaReminderFixture />
+        ) : params.has("computerUse") ? (
           <ComputerUseFixture />
         ) : params.has("teamEntry") ? (
           <OffPeakTeamEntryFixture />

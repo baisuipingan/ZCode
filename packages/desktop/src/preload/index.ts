@@ -717,6 +717,10 @@ contextBridge.exposeInMainWorld("zcode", {
   openInFileManager: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenInFileManager, path),
   /** 使用系统默认应用打开本地文件 */
   openExternalFile: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenExternalFile, path),
+  /** 只读查询实际运行的 macOS 应用，不接受 renderer 指定授权目标。 */
+  getCuaApplicationInfo: () => ipcRenderer.invoke(PlatformChannels.GetCuaApplicationInfo),
+  /** 仅在 Finder 选中当前应用；不接受 renderer 目标，不执行 open appPath。 */
+  revealCuaApplication: () => ipcRenderer.invoke(PlatformChannels.RevealCuaApplication),
   /** 打开 MiloCode Computer Use 完整权限引导 */
   openCuaPermissionOnboarding: (options?: OpenCuaPermissionOnboardingOptions) =>
     ipcRenderer.invoke(PlatformChannels.OpenCuaPermissionOnboarding, options),
