@@ -50,6 +50,6 @@ AST 扫描覆盖 5,618 个受版本管理的 JS/TS 源文件，另检视原生�
 - Linux 入口用临时目录验证旧/新归属清理、自定义条目保护、AppImage 更新与协议保留，6 个场景通过；Linux 安装器 metadata 方法实调通过。未正式打 Linux 包；Windows 专用 NSIS smoke 在 Mac 上跳过。
 - UI/Web 范围执行了 AST 兼容比较、Lint 和 E2E 脚本语法检查，未执行其真实浏览器场景；Android 资源完成 XML/JSON 解析与精确差异检查，未构建 Android 包。
 
-本轮未提交、推送、发新包或部署。已发布 3.17.4 安装包保持不变；用户安装的旧包不会因为源码修复而自动改变文字，需要后续递增版本发布才会生效。内部 Logo 和现有系统图标未改。
+上述审计结束时尚未提交、推送、发新包或部署。用户随后授权发布，3.17.5 的独立构建、最终安装包验收和上线状态记于 [37 号发布记录](37-client-release-3.17.5.md)。已发布 3.17.4 安装包保持不变；用户需要更新版本后才会看到修复。内部 Logo 和现有系统图标未改。
 
 完整证据目录：`output/branding-audit-20261114/`。主要日志为 `typecheck-final.log`、`lint-final.log`、`architecture-final.log`、`architecture-tooling-tests.log`、`native-menu-e2e.log`、`desktop-doctor-fixed.log`；范围说明为 `cli-review.md`、`ui-web-server-review.md`、`android-ui-resources-review.md`。
