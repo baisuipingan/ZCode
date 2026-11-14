@@ -1,6 +1,6 @@
 # Computer Use：接入 Vercel agent-desktop
 
-状态：代码接入完成，未发布安装包。目标版本固定为 agent-desktop v1.3.1（Apache-2.0），commit `b0b7277bea09b770ef9d1fb45aad667bc432cd57`。本次不修改 Sub2API 或模型计费。Mac 成功操作链与 Windows 实机验收的限制见下文。
+状态：Mac ARM64 / Windows x64 的 3.17.7 已发布，最终包验收与公网核验通过，见 [40 号记录](40-client-release-3.17.7.md)。目标版本固定为 agent-desktop v1.3.1（Apache-2.0），commit `b0b7277bea09b770ef9d1fb45aad667bc432cd57`。本次不修改 Sub2API 或模型计费。
 
 ## 产品与接口
 
@@ -71,7 +71,7 @@ sequenceDiagram
 5. 不修改现有会话、账户数据、钥匙串、更新密钥、应用内部 Logo 或已发布 3.17.6 下载资产。
 6. CUA 协议 fixture 分别断言 Windows `session start` 前状态叶目录不存在、由原生 fixture 创建，macOS 已有目录保持 `0700`；权限查询仍无预创建。Windows 最终安装包再以真实原生程序验证 DACL 和完整 Computer Use 链，fixture 不能替代 Windows 动态验收。
 
-## 实际验证记录（2026-11-14）
+## 首轮接入验证记录（2026-11-14，发行前）
 
 - 全仓 `pnpm typecheck` 通过；`pnpm lint` 为 0 errors、84 个既有 warnings。CUA 包独立 lint 为 0 errors / 0 warnings，Node REPL 独立类型检查与修改文件定向 lint 通过。
 - `pnpm architecture:check --changed` 通过，0 violations；`git diff --check` 通过。
@@ -80,4 +80,10 @@ sequenceDiagram
 - Mac 原生权限读取通过：Accessibility 为 denied、Screen Recording 为 granted。仅对不存在的独立测试应用执行定向观察，返回真实 `PERM_DENIED` 与 `not_sent`；未回退到用户桌面。尚未完成 snapshot → 语义输入 → 再观察的成功路径，需用户先授予辅助功能权限。证据位于本地 `output/cua-integration-audit/native-smoke.json`。
 - Mac ARM64 与 Windows x64 固定发行资产均完成 SHA-256、许可证、同目录 sidecar 和模拟包内布局检查。未进行完整安装包构建、Mac 最终签名包冷启动或 Windows 实机键鼠操作验收。
 - 本次退出后无残留 agent-desktop 进程；临时原生 session 目录已清理。正式客户端仍为 3.17.6，本分支代码尚未发包。
+
+## 最终安装包验证（2026-11-14）
+
+业务提交 `1ba26548035a9675264232c836cf0afeeb079d72` 修正 Windows 叶目录创建顺序并重新构建双平台包；新增回归先红后绿，CUA 用例 15/15 通过，全仓类型检查、lint（0 errors / 84 既有 warnings）及架构检查通过。Windows 同 SHA256 最终安装器在真实 runner 完成安装、登录页、限定窗口的中文 / emoji 物理输入、新观察与独立回显、停止清理及卸载。Mac 最终签名包经用户手动辅助功能授权，以包内 Node REPL / SDK / 原生程序完成限定进程与唯一窗口的中文 / emoji 语义输入及双重结果核对；隔离冷启动、真实 secure storage、PKCE 登录发起 / 取消、菜单及布局通过。
+
+最终证据位于 `output/3.17.7-aclfix-audit/`，文件摘要、CI 地址、更新验签及发布结果见 40。Mac 当前未授权屏幕录制，真实截图未验证；没有交换真实用户登录 token、执行付费模型调用或验证完整原位升级。首轮未发布候选与其失败记录保留，不作为最终包成功证据。
 - 后续 Windows 最终包动态验收定位到状态叶目录被 Node 提前创建、继承 DACL 被原生程序拒绝。目录创建顺序回归先在旧实现上明确失败（`homeExisted: true`），修复后 CUA 包 15/15 通过，定向 lint 0 warnings / 0 errors、CUA 类型检查及架构检查通过；只读权限查询无预建目录的回归也通过。这些 fixture 结果不代替修复后重新构建安装包的 Windows 原生动态验收。
