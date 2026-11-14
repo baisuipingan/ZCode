@@ -38,4 +38,6 @@ Sub2API 下载入口修正以 `fork-v0.2.21-19` / `0.2.21-ds.19` 正式部署，
 
 根目录 typecheck 通过；完整 lint 为 84 项既有 warning、0 error。系统图标与安装背景资源 9/9、生成器 `--check`、局部格式、架构与差异检查通过。GitHub 四份资产的 uploaded 状态、大小与 SHA256 均逐一核对，旧背景 DMG 未进入正式发布。
 
+[GitHub MiloCode 3.17.6](https://github.com/baisuipingan/ZCode/releases/tag/milocode-v3.17.6) 已于 `2026-11-14T10:03:35Z` 正式公开，`draft=false`、`prerelease=false`，发布目标为包含最终 DMG 背景的 `b2d4110c78829fd02a4c3f110bc85aa89c4643e9`；App 自报构建来源仍准确保持 `4e9c4380`。推送门禁已正常通过；其 affected selector 选择了全部 158 个工程规格，按仓库既有规则跳过，未把该套件写成已执行通过。Windows 3.17.4 及以上可继续应用内更新，3.17.3 及更早需手动安装一次。
+
 未执行真实用户 token 交换、付费模型调用或完整原位应用内升级；上述静态、隔离运行与安装验收不替代这些场景。既有 3.17.5 下载、签名和安装包保留。
