@@ -24,6 +24,10 @@ concurrency:
 jobs:
   final-installer:
     if: github.repository == 'baisuipingan/ZCode' && github.ref == 'refs/heads/codex/desktop-managed-agent'
+    # GitHub only exposes draft releases to identities with repository push access.
+    # This job needs that visibility to test the exact asset before publishing it.
+    permissions:
+      contents: write
     runs-on: windows-2025
     timeout-minutes: 20
     defaults:
