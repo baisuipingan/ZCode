@@ -61,3 +61,5 @@ Sub2API 需扩展 `darwin-x64` 发布对象白名单、公开下载元数据与�
 用户已在知悉上述无 Intel 实机运行验收的限制后，明确要求将网站和 Intel Mac 支持部署生产。按这次明确授权准备首次 Intel 发行，保留该运行验证限制，不将它改写为实机通过；不安装 Rosetta、不轮换正式更新身份、不绕过管理员 step-up。先提交并推送本次源码，再从该提交重新构建 3.17.8 的 Intel App 元数据和归档。先前工作树候选只保留验收/哈希证据，不把它当成已提交源码的正式包。
 
 正式准备沿用 Sparkle 2.10.1 和 Keychain account `milocode-updates`，生成仅含 `darwin-x64` 对象的本地发布计划；安装包先上传并核对公网真实长度/摘要，最后才更新独立 x64 feed。须等 Sub2API 的 x64 上传白名单支持正式上线再执行上传，ARM64/Windows 的既有发行对象和 feed 原样保留。构建与发布证据置于 `output/3.17.8-intel-production-audit/`；发布后的实际包摘要、来源提交与结果补记于本规格。
+
+正式推送的既有工程门禁发现根 `package-lock.json` 的两个发行版本元数据仍为 3.17.5，与当前 `package.json` 3.17.8 不一致。仅同步这两个 version 字段，不重算或改变任何依赖锁；保留并执行既有 `desktopProductIdentity` 版本一致性回归。首次推送按仓库提供的显式基线接口使用真实任务起点 `745dbf2d`，因为该 fork 没有 `origin/staging`；不跳过 push hook。
