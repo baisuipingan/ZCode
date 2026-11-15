@@ -293,14 +293,15 @@ it("MiloCode Windows 的免费发布签名策略不再要求付费发行证书",
   const { default: config } = await import("../electron-builder.config.js");
   expect(config.win?.verifyUpdateCodeSignature).toBe(false);
   expect(config.win?.target).toEqual(["nsis"]);
+  expect(config.files).not.toContain("!node_modules/ssh2/lib/protocol/crypto/build/**");
 });
 
-it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async () => {
+it.each(["arm64", "x64"])("MiloCode Mac %s 使用独立更新 feed 并打包对应原生资源", async (arch) => {
   configureMiloCodeTestUpdates("darwin");
+  vi.stubEnv("ZCODE_TARGET_ARCH", arch);
   const { default: config } = await import("../electron-builder.config.js");
   expect(config.mac?.extendInfo).toMatchObject({
-    SUFeedURL:
-      "https://download.example.com/milocode/stable/darwin-arm64/appcast.xml",
+    SUFeedURL: `https://download.example.com/milocode/stable/darwin-${arch}/appcast.xml`,
     MiloCodeReleaseBaseURL: "https://download.example.com/milocode/",
     SURequireSignedFeed: true,
     SUSignedFeedFailureExpirationInterval: 0,
@@ -317,15 +318,26 @@ it("MiloCode Mac 打包原生框架并强制签名 feed 与手动安装", async 
   ]);
   expect(config.mac?.identity).toBe("-");
   expect(config.mac?.hardenedRuntime).toBe(false);
+  const sshOptimizationPrune = "!node_modules/ssh2/lib/protocol/crypto/build/**";
+  if (arch === "x64") {
+    expect(config.files).toContain(sshOptimizationPrune);
+  } else {
+    expect(config.files).not.toContain(sshOptimizationPrune);
+  }
   // 校验锁定打包器真实 schema，避免配置对象看似正确、首次正式打包才暴露非法字段。
-  const {
-    validateConfiguration,
-  } = require("app-builder-lib/out/util/config/config.js");
+  const { validateConfiguration } = require("app-builder-lib/out/util/config/config.js");
   await validateConfiguration(config);
   expect(config.extraResources).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ to: "milocode-update/milocode_sparkle.node" }),
+      expect.objectContaining({
+        from: expect.stringContaining(`milocode-update/darwin-${arch}/milocode_sparkle.node`),
+        to: "milocode-update/milocode_sparkle.node",
+      }),
       expect.objectContaining({ to: "milocode-update/SPARKLE-LICENSE" }),
+      expect.objectContaining({
+        from: expect.stringContaining(`agent-desktop/darwin-${arch}`),
+        to: "agent-desktop",
+      }),
     ]),
   );
 });

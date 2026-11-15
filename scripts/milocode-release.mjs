@@ -53,6 +53,13 @@ async function configFromFile(path) {
   const root = dirname(configPath);
   const local = (value) =>
     typeof value === "string" ? resolve(root, value) : undefined;
+  const macOptions = (mac) => ({
+    archive: local(mac.archive),
+    dmg: local(mac.dmg),
+    generateAppcast: local(mac.generateAppcast),
+    account: mac.account,
+    edKeyFile: local(mac.edKeyFile),
+  });
   return {
     version: config.version,
     baseUrl: config.baseUrl,
@@ -70,17 +77,8 @@ async function configFromFile(path) {
           },
         }
       : {}),
-    ...(config.mac
-      ? {
-          mac: {
-            archive: local(config.mac.archive),
-            dmg: local(config.mac.dmg),
-            generateAppcast: local(config.mac.generateAppcast),
-            account: config.mac.account,
-            edKeyFile: local(config.mac.edKeyFile),
-          },
-        }
-      : {}),
+    ...(config.mac ? { mac: macOptions(config.mac) } : {}),
+    ...(config.macX64 ? { macX64: macOptions(config.macX64) } : {}),
   };
 }
 

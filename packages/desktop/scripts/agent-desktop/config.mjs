@@ -19,6 +19,16 @@ const releases = {
         "87348178e546974ee0f96b74dd03410f61f4972cae5eb5fbd36bf04d2cb50a42",
     },
   },
+  "darwin-x64": {
+    triple: "x86_64-apple-darwin",
+    archiveSha256: "469da10cfb68928c58caff88b92b30526e0ca895ac06bc86b7f533b1d9b309b3",
+    binaryName: "agent-desktop",
+    files: {
+      "agent-desktop": "f762f8ed6a14b114f8a50b902205d3ecb6bcf554d8031f67abd7938af88663cb",
+      "agent-desktop-macos-helper":
+        "95eb80c7a18119319e3345a0ab6587c508e5999985cb7f1bdf1fb887553ea072",
+    },
+  },
   "win32-x64": {
     triple: "x86_64-pc-windows-msvc",
     archiveSha256: "6ee4b1e078f4e78792e79f16e32e4a78b9919464aa3c55629b7e27ed53a08c13",

@@ -11,11 +11,11 @@ export function createMiloCodeMacUpdater(options: MiloCodeMacUpdaterOptions): Mi
   if (
     !app.isPackaged ||
     process.platform !== "darwin" ||
-    process.arch !== "arm64" ||
+    !["arm64", "x64"].includes(process.arch) ||
     !MILOCODE_UPDATE_BASE_URL ||
     !MILOCODE_SPARKLE_PUBLIC_KEY
   ) {
-    throw new Error("MiloCode Mac updates require a configured arm64 release build");
+    throw new Error("MiloCode Mac updates require a configured arm64 or x64 release build");
   }
   const require = createRequire(import.meta.url);
   const native = require(

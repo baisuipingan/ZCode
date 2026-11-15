@@ -28,6 +28,7 @@ test("Mac and Windows resolve isolated sources into the same packaged sidecar di
   const resourcesDir = join(tmpdir(), "package", "resources");
   for (const [platform, arch, binaryName] of [
     ["darwin", "arm64", "agent-desktop"],
+    ["darwin", "x64", "agent-desktop"],
     ["win32", "x64", "agent-desktop.exe"],
   ]) {
     const source = resolveAgentDesktopResources({ platform, arch, desktopRoot });
@@ -50,7 +51,14 @@ test("Mac and Windows resolve isolated sources into the same packaged sidecar di
     ],
   );
   assert.equal(getAgentDesktopRelease({ platform: "linux", arch: "x64" }), null);
-  assert.equal(resolveAgentDesktopResources({ platform: "darwin", arch: "x64" }), null);
+  assert.equal(resolveAgentDesktopResources({ platform: "darwin", arch: "ia32" }), null);
+  const intel = getAgentDesktopRelease({ platform: "darwin", arch: "x64" });
+  assert.equal(intel.triple, "x86_64-apple-darwin");
+  assert.notEqual(
+    intel.archiveSha256,
+    getAgentDesktopRelease({ platform: "darwin", arch: "arm64" }).archiveSha256,
+  );
+  assert.ok(intel.files["agent-desktop-macos-helper"]);
 });
 
 test("actual Electron Builder target cannot accidentally package host architecture resources", () => {

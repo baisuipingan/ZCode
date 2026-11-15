@@ -12,11 +12,14 @@
 milocode/releases/3.17.3/win32-x64/MiloCode-3.17.3-win-x64.exe
 milocode/releases/3.17.3/win32-x64/MiloCode-3.17.3-win-x64.exe.blockmap
 milocode/releases/3.17.3/darwin-arm64/MiloCode-3.17.3-mac-arm64.zip
+milocode/releases/<version>/darwin-x64/MiloCode-<version>-mac-x64.zip
+milocode/releases/<version>/darwin-x64/MiloCode-<version>-mac-x64.dmg
 milocode/stable/win32-x64/latest.json
 milocode/stable/darwin-arm64/appcast.xml
+milocode/stable/darwin-x64/appcast.xml
 ```
 
-版本资源不可覆盖。`stable` 下只存最新版元数据，短缓存。两平台 feed 分别更新；不承诺对象存储具有跨对象原子提交。
+版本资源不可覆盖。`stable` 下只存最新版元数据，短缓存。Windows 与两个 Mac 架构的 feed 分别更新；不承诺对象存储具有跨对象原子提交。Intel Mac 发布支持与验收边界见 [42 号规格](42-intel-mac-release-support.md)，上述 x64 路径不代表该架构已经正式发布。
 
 ## 首期客户端策略与验收
 
@@ -93,7 +96,7 @@ Windows 原正式身份 `milocode-win-2026` 的私钥经搜索无法恢复，用
 }
 ```
 
-`windows` / `mac` 可只提供一项；正式双平台引导版应在真实验收后一起准备。Mac `dmg` 和 Windows `blockmap` 可省略，Mac appcast 的更新目标固定由 ZIP 生成。发布说明内嵌 appcast，本地 `.md` 只作生成器输入，不上传到发布桶。
+`windows` / `mac` / `macX64` 可只提供任意一项；`mac` 保持原 ARM64 语义，`macX64` 使用相同字段并指向真实的 `MiloCode-<version>-mac-x64.zip` 及可选 DMG。两种 Mac 架构可以一起准备，分别生成 `stable/darwin-arm64/appcast.xml` 与 `stable/darwin-x64/appcast.xml`；不要通过给 `mac` 填 Intel 包来切换架构。正式各平台引导版应在真实验收后准备。Mac `dmg` 和 Windows `blockmap` 可省略，Mac appcast 的更新目标固定由 ZIP 生成。发布说明内嵌 appcast，本地 `.md` 只作生成器输入，不上传到发布桶。
 
 ```sh
 node scripts/milocode-release.mjs prepare --config /private/local/release.json --out output/milocode-release/3.17.4

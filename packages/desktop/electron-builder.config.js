@@ -81,7 +81,7 @@ if (targetPlatform.os === "win32") {
 const miloCodeUpdateConfig = await resolveBuildTimeConfig();
 const shouldPackageMiloCodeSparkle =
   targetPlatform.os === "darwin" &&
-  targetPlatform.arch === "arm64" &&
+  ["arm64", "x64"].includes(targetPlatform.arch) &&
   Boolean(miloCodeUpdateConfig.milocodeUpdateBaseUrl) &&
   Boolean(miloCodeUpdateConfig.milocodeSparklePublicKey);
 const miloCodeWindowsUpdatesEnabled =
@@ -91,6 +91,7 @@ const miloCodeWindowsUpdatesEnabled =
 const miloCodeSparkleResources = resolve(
   import.meta.dirname,
   "resources/milocode-update",
+  targetPlatform.key,
 );
 // 修复原因：Windows Chrome 导入入口已暂时隐藏，默认安装包不应继续携带、签名或校验原生 helper。
 // 代码和完整供应链保留在显式 opt-in 后，便于未来恢复而不影响当前发布流程。
@@ -743,7 +744,10 @@ export default {
       context.electronPlatformName === "darwin"
     ) {
       await runTimedAsync("beforePack:prepareMiloCodeSparkle", () =>
-        prepareMacSparkleRuntime({ targetArch: targetPlatform.arch }),
+        prepareMacSparkleRuntime({
+          targetArch: targetPlatform.arch,
+          outDir: miloCodeSparkleResources,
+        }),
       );
     }
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>
@@ -1038,7 +1042,7 @@ export default {
       ...(shouldPackageMiloCodeSparkle
         ? {
             SUFeedURL: new URL(
-              "stable/darwin-arm64/appcast.xml",
+              `stable/${targetPlatform.key}/appcast.xml`,
               miloCodeUpdateConfig.milocodeUpdateBaseUrl,
             ).href,
             MiloCodeReleaseBaseURL: miloCodeUpdateConfig.milocodeUpdateBaseUrl,

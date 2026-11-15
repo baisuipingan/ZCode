@@ -79,10 +79,29 @@ function objectKey(url) {
   return key;
 }
 
+function releaseObjectContentType(item, version) {
+  const platform = item.platform;
+  const prefix = `releases/${version}/${platform}/MiloCode-${version}-`;
+  if (platform === "win32-x64") {
+    if (item.mutable)
+      return item.localPath === `stable/${platform}/latest.json` ? "application/json" : undefined;
+    return [`${prefix}win-x64.exe`, `${prefix}win-x64.exe.blockmap`].includes(item.localPath)
+      ? "application/octet-stream"
+      : undefined;
+  }
+  if (!["darwin-arm64", "darwin-x64"].includes(platform)) return undefined;
+  if (item.mutable)
+    return item.localPath === `stable/${platform}/appcast.xml` ? "application/xml" : undefined;
+  const name = `${prefix}mac-${platform.slice("darwin-".length)}`;
+  if (item.localPath === `${name}.zip`) return "application/zip";
+  if (item.localPath === `${name}.dmg`) return "application/x-apple-diskimage";
+  return undefined;
+}
+
 export async function prepareRelease(options) {
   const version = validVersion(options.version);
   const base = releaseRoot(options.baseUrl);
-  if (!options.windows && !options.mac)
+  if (!options.windows && !options.mac && !options.macX64)
     throw new Error("At least one release platform is required");
   const releaseDate = new Date(options.releaseDate ?? Date.now()).toISOString();
   const outputDir = resolve(options.outputDir);
@@ -170,10 +189,14 @@ export async function prepareRelease(options) {
       await add(feedPath, true, "application/json", "win32-x64");
       plan.windowsPublicKeys = publicKeys;
     }
-    if (options.mac) {
-      const mac = options.mac;
-      const archivePath = `releases/${version}/darwin-arm64/MiloCode-${version}-mac-arm64.zip`;
-      const archive = await stage(mac.archive, archivePath, "application/zip", "darwin-arm64");
+    for (const [arch, mac] of [
+      ["arm64", options.mac],
+      ["x64", options.macX64],
+    ]) {
+      if (!mac) continue;
+      const platform = `darwin-${arch}`;
+      const archivePath = `releases/${version}/${platform}/MiloCode-${version}-mac-${arch}.zip`;
+      const archive = await stage(mac.archive, archivePath, "application/zip", platform);
       const tool = await lstat(mac.generateAppcast);
       if (!tool.isFile() || tool.isSymbolicLink())
         throw new Error("Sparkle generate_appcast must be a regular executable file");
@@ -181,7 +204,7 @@ export async function prepareRelease(options) {
       const signer = await lstat(signUpdate);
       if (!signer.isFile() || signer.isSymbolicLink())
         throw new Error("The matching Sparkle sign_update tool is required");
-      const feedPath = "stable/darwin-arm64/appcast.xml";
+      const feedPath = `stable/${platform}/appcast.xml`;
       await mkdir(dirname(join(outputDir, feedPath)), { recursive: true });
       if (notes)
         await writeFile(join(outputDir, archivePath.replace(/\.zip$/, ".md")), notes, {
@@ -247,14 +270,14 @@ export async function prepareRelease(options) {
         join(outputDir, archivePath),
         archiveSignature,
       ]);
-      await add(feedPath, true, "application/xml", "darwin-arm64");
+      await add(feedPath, true, "application/xml", platform);
       // appcast 只从 ZIP 生成，DMG 仅用于首次手动安装，不能让生成器选到另一个格式。
       if (mac.dmg)
         await stage(
           mac.dmg,
-          `releases/${version}/darwin-arm64/MiloCode-${version}-mac-arm64.dmg`,
+          `releases/${version}/${platform}/MiloCode-${version}-mac-${arch}.dmg`,
           "application/x-apple-diskimage",
-          "darwin-arm64",
+          platform,
         );
     }
     plan.objects.sort((a, b) => Number(a.mutable) - Number(b.mutable));
@@ -303,11 +326,13 @@ export async function validateReleasePlan(dir) {
     const requiredPrefix = item.mutable
       ? `stable/${item.platform}/`
       : `releases/${plan.version}/${item.platform}/`;
+    const expectedContentType = releaseObjectContentType(item, plan.version);
     if (
-      !["win32-x64", "darwin-arm64"].includes(item.platform) ||
+      !expectedContentType ||
+      item.contentType !== expectedContentType ||
       !item.localPath.startsWith(requiredPrefix)
     )
-      throw new Error("Release object is outside platform/version prefix");
+      throw new Error("Release object is outside its platform/version path or format");
     seen.add(item.key);
     const actual = await hashes(absolutePath);
     if (actual.size !== item.size || actual.sha256 !== item.sha256 || actual.sha512 !== item.sha512)
@@ -323,6 +348,23 @@ export async function validateReleasePlan(dir) {
       productId: plan.productId,
       platform: "win32-x64",
     });
+  for (const platform of ["darwin-arm64", "darwin-x64"]) {
+    const macObjects = objects.filter((item) => item.platform === platform);
+    if (!macObjects.length) continue;
+    const feed = macObjects.find((item) => item.mutable);
+    const archive = macObjects.find((item) => item.contentType === "application/zip");
+    if (!feed || !archive) throw new Error("Mac release requires its own feed and ZIP archive");
+    const xml = await readFile(feed.absolutePath, "utf8");
+    const enclosure = xml.match(/<enclosure\s[^>]*>/)?.[0] ?? "";
+    // 根因：两个 Mac 架构共用一个发布工具；计划复核必须将 feed 绑定到同架构 ZIP，
+    // 不能仅凭 platform 字段和文件哈希把错误架构的更新链接发布出去。
+    if (
+      !enclosure.includes(`url="${archive.publicUrl}"`) ||
+      !enclosure.includes(`length="${archive.size}"`) ||
+      !/sparkle:edSignature="[A-Za-z0-9+/=]+"/.test(enclosure)
+    )
+      throw new Error("Mac feed must reference its own platform ZIP archive");
+  }
   objects.sort((a, b) => Number(a.mutable) - Number(b.mutable));
   return { ...plan, objects };
 }

@@ -31,6 +31,27 @@ describe("desktop native package policy", () => {
     expect(findDesktopNativePackageViolations(entries, "darwin-arm64")).toEqual([]);
   });
 
+  it("Intel 只裁剪 ssh2 安装机优化插件，保留主库及既有平台策略", () => {
+    const pattern = "!node_modules/ssh2/lib/protocol/crypto/build/**";
+    expect(createDesktopNativePackagePrunePatterns("darwin-x64")).toContain(pattern);
+    for (const platform of ["darwin-arm64", "win32-x64", "linux-x64"]) {
+      expect(createDesktopNativePackagePrunePatterns(platform)).not.toContain(pattern);
+    }
+    const runtime = parseAsarListWithPackState(
+      "pack : /node_modules/ssh2/lib/protocol/crypto.js\npack : /node_modules/ssh2/lib/client.js",
+    );
+    expect(findDesktopNativePackageViolations(runtime, "darwin-x64")).toEqual([]);
+  });
+
+  it.each(["pack", "unpack"])("Intel 拒绝漏网的 ssh2 现场编译物（%s）", (packState) => {
+    const entries = parseAsarListWithPackState(
+      `${packState} : /node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node`,
+    );
+    expect(findDesktopNativePackageViolations(entries, "darwin-x64")).toEqual([
+      expect.stringContaining("安装机生成的 ssh2 优化插件"),
+    ]);
+  });
+
   it("应同时拒绝跨平台包、安装机产物和仍留在 asar payload 的 native", () => {
     const entries = parseAsarListWithPackState(
       [

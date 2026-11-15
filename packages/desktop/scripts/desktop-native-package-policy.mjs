@@ -57,6 +57,12 @@ export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
     // 桌面运行时统一使用目标 prebuild，禁止把安装机现场编译物或 ABI bin 缓存带进跨平台包。
     "!node_modules/node-pty/build/**",
     "!node_modules/node-pty/bin/**",
+    // Intel 首个实际包曾混入 ARM64 安装机的 sshcrypto.node；这个可选优化插件
+    // 没有固定的目标预编译来源，Intel 包使用 ssh2 官方的 Node/OpenSSL 回退。
+    // 仅约束新 Intel 发行，保留既有 ARM64/Windows/Linux 打包行为。
+    ...(targetPlatformKey === "darwin-x64"
+      ? ["!node_modules/ssh2/lib/protocol/crypto/build/**"]
+      : []),
     ...SUPPORTED_DESKTOP_PLATFORM_KEYS.filter((key) => key !== targetPlatformKey).map(
       (key) => `!node_modules/node-pty/prebuilds/${key}/**`,
     ),
@@ -97,6 +103,15 @@ export function findDesktopNativePackageViolations(entries, targetPlatformKey) {
 
   for (const entry of entries) {
     const { packState, path } = entry;
+
+    if (
+      targetPlatformKey === "darwin-x64" &&
+      (path === "/node_modules/ssh2/lib/protocol/crypto/build" ||
+        path.startsWith("/node_modules/ssh2/lib/protocol/crypto/build/"))
+    ) {
+      violations.push(`Intel 包不应携带安装机生成的 ssh2 优化插件: ${path}`);
+      continue;
+    }
 
     if (
       path === "/node_modules/@napi-rs/canvas" ||

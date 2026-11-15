@@ -104,8 +104,8 @@ export async function ensureSparkleDistribution({
 }
 
 export async function prepareMacSparkleRuntime({
-  outDir = join(desktopRoot, "resources/milocode-update"),
   targetArch = process.arch,
+  outDir = join(desktopRoot, "resources/milocode-update", `darwin-${targetArch}`),
   nodeIncludeDir = resolve(dirname(process.execPath), "../include/node"),
   cacheDir,
   engineeringTest = false,

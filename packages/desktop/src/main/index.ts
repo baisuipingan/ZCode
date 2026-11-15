@@ -2311,7 +2311,7 @@ app.whenReady().then(async () => {
       process.arch === "x64" &&
       MILOCODE_UPDATE_PUBLIC_KEYS_JSON !== "{}") ||
     (process.platform === "darwin" &&
-      process.arch === "arm64" &&
+      ["arm64", "x64"].includes(process.arch) &&
       Boolean(MILOCODE_SPARKLE_PUBLIC_KEY));
   void initAutoUpdater({
     enabled:

@@ -1,6 +1,6 @@
 # Agent desktop release assets
 
-This build adapter owns the pinned agent-desktop v1.3.1 native resources and their provenance. It prepares macOS arm64 and Windows x64 only. Unsupported targets return `null`, and never download an alternative version or search PATH.
+This build adapter owns the pinned agent-desktop v1.3.1 native resources and their provenance. It prepares macOS arm64/x64 and Windows x64 only. Unsupported targets return `null`, and never download an alternative version or search PATH. Each architecture pins its own official archive and exact member SHA256 digests; macOS x64 uses the verified `x86_64-apple-darwin` release.
 
 Public build APIs live in `config.mjs` (release, source/packaged paths, Electron Builder resource entries) and `assets.mjs` (prepare and SHA-256/layout verification). `contract.ts` describes their aggregate intent. Desktop runtime receives an absolute binary path from its host; this module does not own sessions, actions, credentials or permissions.
 

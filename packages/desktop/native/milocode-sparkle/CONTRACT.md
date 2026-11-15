@@ -45,7 +45,9 @@ The build entry point is `scripts/milocode-sparkle-runtime.mjs`:
   verifies SHA256 before extraction, and caches the framework and release tools.
 - `prepareMacSparkleRuntime({ targetArch, outDir })` compiles the Node-API bridge
   and stages `milocode_sparkle.node`, `Sparkle.framework`, `SPARKLE-LICENSE`, and
-  `sparkle-runtime.json`. It uses no release private key.
+  `sparkle-runtime.json`. It supports `arm64` and `x64`, defaults its staging
+  directory to `resources/milocode-update/darwin-<targetArch>`, and uses no release
+  private key. Different architectures must never write one staging directory.
 - Packaging must put the addon/license under
   `Contents/Resources/milocode-update/` and the framework under
   `Contents/Frameworks/`. Do not copy a second framework into Resources. The addon

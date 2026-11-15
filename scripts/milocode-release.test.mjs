@@ -7,6 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createReleaseKeys } from "./milocode-release-keys.mjs";
+import { runReleaseCli } from "./milocode-release.mjs";
 import { prepareRelease, validateReleasePlan, publishRelease } from "./milocode-release-stage.mjs";
 import { createS3Client, signS3Request } from "./milocode-release-s3.mjs";
 
@@ -125,30 +126,82 @@ test(
         force: true,
       }),
     );
-    const plan = await prepareRelease({
-      ...options,
-      windows: undefined,
-      mac: {
-        archive,
-        generateAppcast: join(tools, "generate_appcast"),
-        edKeyFile: keyFile,
-      },
-      releaseNotes: "Validated local fixture; no installation or cloud upload.",
-    });
-    await validateReleasePlan(options.outputDir);
-    const feed = plan.objects.find((item) => item.mutable);
-    const xml = await readFile(join(options.outputDir, feed.localPath), "utf8");
-    assert.match(xml, /sparkle:edSignature="[A-Za-z0-9+/=]+"/);
-    assert.match(
-      xml,
-      /https:\/\/download\.example\.com\/milocode\/releases\/3\.17\.3\/darwin-arm64\//,
+    const dmg = join(dir, "manual-install.dmg");
+    await writeFile(dmg, "Non-executable engineering DMG fixture; never installed.");
+    const mac = {
+      archive,
+      dmg,
+      generateAppcast: join(tools, "generate_appcast"),
+      edKeyFile: keyFile,
+    };
+    for (const [arch, input] of [
+      ["arm64", "mac"],
+      ["x64", "macX64"],
+    ]) {
+      const outputDir = join(dir, `release-${arch}`);
+      const plan = await prepareRelease({
+        ...options,
+        outputDir,
+        windows: undefined,
+        [input]: mac,
+        releaseNotes: "Validated local fixture; no installation or cloud upload.",
+      });
+      await validateReleasePlan(outputDir);
+      const feed = plan.objects.find((item) => item.mutable);
+      assert.equal(feed.localPath, `stable/darwin-${arch}/appcast.xml`);
+      assert.ok(plan.objects.every((item) => item.platform === `darwin-${arch}`));
+      assert.ok(
+        plan.objects.some(
+          (item) =>
+            item.localPath === `releases/3.17.3/darwin-${arch}/MiloCode-3.17.3-mac-${arch}.dmg`,
+        ),
+      );
+      const xml = await readFile(join(outputDir, feed.localPath), "utf8");
+      assert.match(xml, /sparkle:edSignature="[A-Za-z0-9+/=]+"/);
+      assert.ok(xml.includes(`/releases/3.17.3/darwin-${arch}/MiloCode-3.17.3-mac-${arch}.zip`));
+      await runFile(join(tools, "sign_update"), [
+        "--ed-key-file",
+        keyFile,
+        "--verify",
+        join(outputDir, feed.localPath),
+      ]);
+    }
+
+    // 使用真实 CLI 配置解析与官方 signer 同时准备两种架构，避免新增入口只在 API 测试里可用。
+    const configFile = join(dir, "release.json");
+    const outputDir = join(dir, "release-both");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        version: options.version,
+        baseUrl: options.baseUrl,
+        mac,
+        macX64: mac,
+      }),
     );
-    await runFile(join(tools, "sign_update"), [
-      "--ed-key-file",
-      keyFile,
-      "--verify",
-      join(options.outputDir, feed.localPath),
-    ]);
+    await runReleaseCli(["prepare", "--config", configFile, "--out", outputDir]);
+    const plan = await validateReleasePlan(outputDir);
+    assert.deepEqual(
+      plan.objects.filter((item) => item.mutable).map((item) => item.localPath),
+      ["stable/darwin-arm64/appcast.xml", "stable/darwin-x64/appcast.xml"],
+    );
+    const x64Feed = plan.objects.find((item) => item.localPath === "stable/darwin-x64/appcast.xml");
+    const changed = (await readFile(x64Feed.absolutePath, "utf8")).replaceAll(
+      "/darwin-x64/",
+      "/darwin-arm64/",
+    );
+    await writeFile(x64Feed.absolutePath, changed);
+    const savedPlan = JSON.parse(await readFile(join(outputDir, "release-plan.json"), "utf8"));
+    Object.assign(
+      savedPlan.objects.find((item) => item.key === x64Feed.key),
+      {
+        size: Buffer.byteLength(changed),
+        sha256: createHash("sha256").update(changed).digest("hex"),
+        sha512: createHash("sha512").update(changed).digest("base64"),
+      },
+    );
+    await writeFile(join(outputDir, "release-plan.json"), JSON.stringify(savedPlan));
+    await assert.rejects(publishRelease({ dir: outputDir, dryRun: true }), /own platform ZIP/);
   },
 );
 
