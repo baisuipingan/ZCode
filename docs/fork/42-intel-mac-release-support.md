@@ -1,6 +1,6 @@
 # MiloCode Intel Mac 发布支持
 
-状态：已实现并完成 3.17.8 Intel DMG/ZIP 候选构建及静态验收，2026-11-15；未完成 Intel 实机运行验收，未正式发布，不改变现有版本号。
+状态：3.17.8 Intel DMG/ZIP 已于 2026-11-15 正式发布至 R2 和独立 x64 更新源，静态验收及公网完整哈希/签名验证通过；用户已明确授权在缺少 Intel 实机运行验收的情况下发布，不改变现有版本号。
 
 ## 产品与架构边界
 
@@ -33,7 +33,7 @@ Sub2API 需扩展 `darwin-x64` 发布对象白名单、公开下载元数据与�
 
 工程回归覆盖：两种 builder 配置使用各自 feed 和架构隔离资源；Mac 发布配置解析；官方 Sparkle 对两个独立 feed 的真实签名；发布计划拒绝跨架构引用和错误对象格式；x64 原生资源准备与校验。执行根 typecheck / lint 和架构检查，报告真实结果。
 
-正式发布仍需校验实际 ZIP / DMG 中的主程序、Sparkle bridge 与原生 sidecar 架构，完成 Intel Mac 或可说明限制的运行验收；当前 Apple Silicon 机器上的配置/签名测试不等于 Intel 实机通过。未完成发布门槛前不切换正式 x64 feed，也不覆盖任何已发布版本。
+正式发布须校验实际 ZIP / DMG 中的主程序、Sparkle bridge 与原生 sidecar 架构，完成 Intel Mac 或可说明限制的运行验收；当前 Apple Silicon 机器上的配置/签名测试不等于 Intel 实机通过。本次已按用户知悉限制后的明确授权完成首次 x64 发布，缺少实机验证仍如实保留，不覆盖任何已发布版本。
 
 ## 本地实施验证（2026-11-15）
 
@@ -52,7 +52,7 @@ Sub2API 需扩展 `darwin-x64` 发布对象白名单、公开下载元数据与�
 | `MiloCode-3.17.8-mac-x64.dmg` | 245380311 | `cff2314a38f7092f30b7d1140ed3c51665bacefee7a3b2ca205b58fd3595d36c` |
 | `MiloCode-3.17.8-mac-x64.zip` | 237728551 | `3bff9e17acf15332405df577869769cc29bd46f73089b7ac87a80abc54e7ffb2` |
 
-验收与构建日志置于 `output/3.17.8-intel-release-audit/`，包含工作树来源、首个候选拒绝证据、修复后静态结果和 SSH 回环；该候选来自当前工作树，记录基线 HEAD 和未提交补丁摘要，不将它描述为已提交的正式发行源码。为释放磁盘，验证后的约 732 MiB Builder 临时 App 已移除，最终 DMG/ZIP、blockmap、清单及证据保留；需要运行验收时从最终归档提取。
+验收与构建日志置于 `output/3.17.8-intel-release-audit/`，包含工作树来源、首个候选拒绝证据、修复后静态结果和 SSH 回环；该候选来自当前工作树，记录基线 HEAD 和未提交补丁摘要，不将它描述为已提交的正式发行源码。候选验证后约 732 MiB Builder 临时 App 已移除；在下面的已提交源码正式重建完成后，未发布候选归档也已删除，保留其哈希、清单与验收证据，正式归档单独保存。
 
 当前 Apple Silicon 主机尝试 `arch -x86_64 agent-desktop --version` 返回 `Bad CPU type in executable`，未能执行 Intel 程序；未擅自安装 Rosetta 或改系统设置。Intel 完整应用启动、登录、Computer Use 和升级仍需后续真实运行验证。包沿用免费 ad-hoc 签名、未 Apple 公证，Gatekeeper 拒绝结果与代码封印通过分别记录。既有可选窗口吸附 helper 也因本机 CLT 缺少 Intel Swift 兼容库未生成，授权提示仍可用但不吸附；这与先前 ARM64 包的存量状态相同。此次没有修改版本号、上传资源或切换任何 stable feed。
 
@@ -63,3 +63,25 @@ Sub2API 需扩展 `darwin-x64` 发布对象白名单、公开下载元数据与�
 正式准备沿用 Sparkle 2.10.1 和 Keychain account `milocode-updates`，生成仅含 `darwin-x64` 对象的本地发布计划；安装包先上传并核对公网真实长度/摘要，最后才更新独立 x64 feed。须等 Sub2API 的 x64 上传白名单支持正式上线再执行上传，ARM64/Windows 的既有发行对象和 feed 原样保留。构建与发布证据置于 `output/3.17.8-intel-production-audit/`；发布后的实际包摘要、来源提交与结果补记于本规格。
 
 正式推送的既有工程门禁发现根 `package-lock.json` 的两个发行版本元数据仍为 3.17.5，与当前 `package.json` 3.17.8 不一致。仅同步这两个 version 字段，不重算或改变任何依赖锁；保留并执行既有 `desktopProductIdentity` 版本一致性回归。首次推送按仓库提供的显式基线接口使用真实任务起点 `745dbf2d`，因为该 fork 没有 `origin/staging`；不跳过 push hook。
+
+## 首次 Intel 正式发布结果（2026-11-15）
+
+正式源码提交为 [`020b36c7653d2150836fa7870c986fc9eb3616a9`](https://github.com/baisuipingan/ZCode/commit/020b36c7653d2150836fa7870c986fc9eb3616a9)。从干净且已推送的该提交重新构建完整 App；包内 `buildCommitId` 为 `020b36c7`。根 typecheck、lint（0 errors / 84 项存量 warnings）、架构检查及完整 pre-push 门禁通过，包含 59/59 受影响工程回归。正式 DMG/ZIP 静态验收 28/28 通过，27 个 Mach-O 均支持 x86_64；候选与正式包的元数据/哈希分别记录，不混用。
+
+在 Sub2API `0.2.21-ds.21` 的上传白名单上线并通过生产检查后，经既有管理员发布 API 申请绑定对象和条件的临时 PUT URL，资源正文由发布机直传 R2。正式计划只含以下三项，不含 ARM64 或 Windows 对象；管理员 Key 仅驻留进程内存，未写入计划、日志或对象，未生成/轮换密钥，未绕过 step-up。
+
+| 正式对象                                                                                                 |      字节 | SHA256                                                             |
+| -------------------------------------------------------------------------------------------------------- | --------: | ------------------------------------------------------------------ |
+| [Intel ZIP](https://download.editor.vip/milocode/releases/3.17.8/darwin-x64/MiloCode-3.17.8-mac-x64.zip) | 237728242 | `68ec605b1f12bd2b842bc1df0acfe91f45ddb4279be32c3948780ff4394d1116` |
+| [Intel DMG](https://download.editor.vip/milocode/releases/3.17.8/darwin-x64/MiloCode-3.17.8-mac-x64.dmg) | 245379861 | `6d5adb9ea1ba0ac15db6426318fa392dc194fb20028e887e7c31e08aa70766d7` |
+| [Intel stable feed](https://download.editor.vip/milocode/stable/darwin-x64/appcast.xml)                  |      1650 | `b49c2ec24fdbf2319a6ebdd7a66bb7c9c4df259aabf4da2f75ad1220ec501806` |
+
+标准 publisher 按 ZIP、DMG、feed 顺序完成上传；每项真实公网 HEAD、Range 和一次流式完整 GET 的长度/SHA512 均通过。独立复核再核对两个包首部/中部/尾部 128 字节、正确 MIME 与 immutable 缓存，并对真实公网 feed 使用既有固定正式公钥执行 Node 标准 Ed25519 验证；ZIP 的固定公钥验签与包内公钥一致性已在发布前完成。feed 使用 `no-cache, max-age=0, must-revalidate`。
+
+既有 ARM64 与 Windows feed SHA256 分别保持 `b994f27fe1ab6481af9d3d224b88495f764ce5b242788b3dd48c1bd75ffe2191`、`2506a03eb7a57c75c0a0004232cc0a2a5e5a0e51f3ca676773fed26cd8694e43`，未变更它们的发行资源。正式包与仅三对象的签名计划保存于 `output/milocode-release/3.17.8-mac-x64/`，来源、验收、独立验签及公网复核保存于 `output/3.17.8-intel-production-audit/`。
+
+[GitHub 既有 3.17.8 Release](https://github.com/baisuipingan/ZCode/releases/tag/milocode-v3.17.8) 也只新增同摘要的 Intel DMG/ZIP，并在保留原文后追加本次独立来源与哈希。独立查询 GitHub asset digest/size 与正式计划一致；四个原资源的 ID/digest/size、原 tag 指向 `77c72d46ff46205147514c54cf3f7e8900f9579e` 均未变，不将旧 tag 伪称为本次 Intel 源码。
+
+发布后仅删除此次 Builder 正式构建目录中与签名计划逐一比对哈希一致的两份重复归档，释放 483,108,103 字节；正式签名计划及其归档保留。构建临时 App、此次生成的 Sparkle 提取缓存和旧工作树候选归档也在保存验收证据后清理，没有删除已安装程序、用户数据、正式签名身份或既有发行资源。
+
+Intel 完整应用启动、登录、Computer Use 和应用内升级仍未经过 Intel 实机验证；静态检查与公网验证不替代这部分运行验收。Mac 仍为免费 ad-hoc 签名、未 Apple 公证，系统下限 macOS 13；既有可选窗口吸附 helper 缺失的限制保留。

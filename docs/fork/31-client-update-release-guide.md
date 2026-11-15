@@ -19,7 +19,7 @@ milocode/stable/darwin-arm64/appcast.xml
 milocode/stable/darwin-x64/appcast.xml
 ```
 
-版本资源不可覆盖。`stable` 下只存最新版元数据，短缓存。Windows 与两个 Mac 架构的 feed 分别更新；不承诺对象存储具有跨对象原子提交。Intel Mac 发布支持与验收边界见 [42 号规格](42-intel-mac-release-support.md)，上述 x64 路径不代表该架构已经正式发布。
+版本资源不可覆盖。`stable` 下只存最新版元数据，短缓存。Windows 与两个 Mac 架构的 feed 分别更新；不承诺对象存储具有跨对象原子提交。Intel Mac 3.17.8 已首次正式发布，来源、对象哈希及缺少 Intel 实机运行验收的限制见 [42 号规格](42-intel-mac-release-support.md)。
 
 ## 首期客户端策略与验收
 
