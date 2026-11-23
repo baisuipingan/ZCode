@@ -106,7 +106,7 @@ export async function persistBackgroundTaskNotificationCommand(
   this: AgentRuntimeInternal,
   command: TaskNotificationRuntimeCommand,
 ): Promise<MessageId> {
-  const persisted = await persistBackgroundTaskNotificationBatch.call(this, [command], true);
+  const persisted = await persistBackgroundTaskNotificationBatch.call(this, [command], "midTurn");
   return persisted.messageId;
 }
 
@@ -171,7 +171,7 @@ export function resolveBackgroundTaskNotificationOriginMeta(
 export async function persistBackgroundTaskNotificationBatch(
   this: AgentRuntimeInternal,
   commands: readonly [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
-  midTurn = false,
+  delivery: "standalone" | "midTurn" | "contextOnly" = "standalone",
 ): Promise<PersistedBackgroundTaskNotificationBatch> {
   const firstCommand = commands[0];
   const backgroundSource = resolveBackgroundTaskNotificationSource(commands);
@@ -182,10 +182,10 @@ export async function persistBackgroundTaskNotificationBatch(
   // 修复原因：整批原来存成一个连接字符串，投影时再按 <task-notification> 开头猜每条的边界；
   // workflow 运行中通知不以它开头，会被并进前一条通知的包装。空闲整批的每条通知改为同一条消息的
   // 一个文本块，模型看到的和冷恢复读回的都按块包装，边界不靠猜。轮中通知每条单独入队，不成批。
-  const blocks = !midTurn && texts.length > 1 ? texts : undefined;
+  const blocks = texts.length > 1 ? texts : undefined;
   await this.ensureContextInitialized(firstCommand.traceContext);
   const messageID = createMessageId();
-  const inputPresentation = midTurn ? "task_notification_steer" : "task_notification";
+  const inputPresentation = delivery === "midTurn" ? "task_notification_steer" : "task_notification";
   this.messageHistory.addUser(
     blocks ? blocks.map((block) => ({ type: "text" as const, text: block })) : text,
     runtimeInputMetadata(inputPresentation),
@@ -194,6 +194,7 @@ export async function persistBackgroundTaskNotificationBatch(
     messageID,
     metadata: {
       inputPresentation,
+      ...(delivery === "contextOnly" ? { backgroundWakeSuppressed: true } : {}),
       ...(originMeta ? { originMeta } : {}),
       visibility: "model-only",
     },

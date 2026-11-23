@@ -263,6 +263,7 @@ export class AgentRuntime {
   // v4 setAutoDrain：false 时排队输入不自动消费
   // （turn-stop 不续跑、roundtrip 间不 drain），保留成 held 供显式消费。
   private queueAutoDrain = true;
+  private backgroundWakePaused = false;
   // 暂停队列恢复后由 CLI 按投影 FIFO 逐项提升。这个窗口内禁止 core 只看当前
   // activeTurn.pendingInputs 做行内 drain，否则新入队消息会越过仍留在投影中的旧暂停项。
   private queueExternalDrainActive = false;

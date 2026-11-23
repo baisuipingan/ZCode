@@ -175,6 +175,7 @@ export interface AgentRuntimeInternal
   pendingInputDrains?: number;
   lastPermissionGrantId?: string;
   queueAutoDrain: boolean;
+  backgroundWakePaused: boolean;
   queueExternalDrainActive: boolean;
   shuttingDown: boolean;
   readonly shutdownSignal: AbortSignal;

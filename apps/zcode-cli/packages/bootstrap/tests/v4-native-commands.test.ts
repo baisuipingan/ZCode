@@ -2019,6 +2019,7 @@ describe("v4 原生 stop", () => {
 
     expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
       expectedForegroundExecutionId: "foreground-1",
+      pauseBackgroundWake: true,
       reason: "v4 session stopped",
     });
     expect(setQueueAutoDrain).toHaveBeenCalledWith(false);

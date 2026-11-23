@@ -19,6 +19,7 @@ import {
   type SessionStorePort,
   type TodoItem,
 } from "@zcode/contracts";
+import { getConversationModelOnlyTurnTriggerSource } from "@zcode/shared";
 import { formatTaskNotification } from "../src/runtime-task/notification.js";
 import {
   formatLocalAgentTaskNotification,
@@ -756,6 +757,86 @@ describe("subagent background notifications", () => {
       );
     },
   );
+
+  it("keeps queued and late background notifications from restarting a stopped conversation", async () => {
+    const sessionId = createSessionId("background-notification-manual-stop");
+    const sessionStore = new RecordingSessionStore();
+    const firstRequestStarted = createDeferred<void>();
+    const requests: string[] = [];
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { workingDirectory: "/tmp/zcode-background-notification-manual-stop" },
+      {
+        eventStore: createTestSessionEventStore(),
+        modelFactory: createTestModelFactory({
+          async generateText(request: {
+            abortSignal?: AbortSignal;
+            messages: readonly { content: ModelMessageContent }[];
+          }) {
+            requests.push(providerMessagesToText(request.messages));
+            if (requests.length === 1) {
+              firstRequestStarted.resolve(undefined);
+              await waitForAbort(request.abortSignal);
+              throw request.abortSignal?.reason ?? new Error("stopped");
+            }
+            return modelTextResult("done");
+          },
+        } as never),
+        sessionStore: sessionStore as unknown as SessionStorePort,
+      },
+    );
+    const traceContext = {
+      traceId: "trace_background_stop",
+      spanId: "span_background_stop",
+      sessionId,
+    };
+    const notify = (taskId: string) =>
+      runtime.enqueueBackgroundTaskNotification({
+        taskId,
+        text: `<task-notification><task-id>${taskId}</task-id></task-notification>`,
+        traceContext,
+      });
+
+    const interrupted = expect(runtime.executeTurn("first prompt")).rejects.toMatchObject({
+      type: "turn_cancelled",
+    });
+    await firstRequestStarted.promise;
+    notify("queued_before_stop");
+    const foregroundExecutionId = runtime.getActiveForegroundExecutionId();
+    expect(foregroundExecutionId).toBeDefined();
+    expect(
+      runtime.stopActiveForegroundExecution({
+        expectedForegroundExecutionId: foregroundExecutionId,
+        pauseBackgroundWake: true,
+      }),
+    ).toMatchObject({ kind: "stopped" });
+    await interrupted;
+
+    await waitForCondition(() => sessionStore.promotedSessionInputs.length === 1);
+    notify("late_after_stop");
+    await waitForCondition(() => sessionStore.promotedSessionInputs.length === 2);
+    expect(requests).toHaveLength(1);
+    expect(runtime.getActiveForegroundExecutionId()).toBeUndefined();
+    const notices = sessionStore.savedMessages.filter(
+      (message) => message.source === "background_task",
+    );
+    expect(notices).toHaveLength(2);
+    for (const notice of notices) {
+      expect(notice.metadata).toMatchObject({ backgroundWakeSuppressed: true });
+      const parts = sessionStore.savedParts.filter((part) => part.messageID === notice.id);
+      expect(getConversationModelOnlyTurnTriggerSource({ info: notice, parts })).toBeNull();
+    }
+
+    await runtime.executeTurn("continue explicitly");
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain("<task-id>queued_before_stop</task-id>");
+    expect(requests[1]).toContain("<task-id>late_after_stop</task-id>");
+    expect(requests[1]).toContain("continue explicitly");
+
+    notify("new_notification");
+    await waitForCondition(() => requests.length === 3);
+    expect(requests[2]).toContain("<task-id>new_notification</task-id>");
+  });
 
   it("wakes idle background notifications without scheduling a timeout", async () => {
     const sessionId = createSessionId("background-notification-idle-wake-ref");

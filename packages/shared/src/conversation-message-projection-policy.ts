@@ -173,6 +173,8 @@ export function getConversationModelOnlyTurnTriggerSource(
   message: ConversationProjectionMessage,
 ): string | null {
   if (message.info.role !== "user") return null;
+  // Stop 后保存的后台结果可用于上下文。恢复历史时也不能凭结果重建一个执行轮。
+  if (metadataRecord(message.info.metadata)?.backgroundWakeSuppressed === true) return null;
   if (getConversationMessageProjectionPolicy(message) !== "providerContextOnly") {
     return null;
   }

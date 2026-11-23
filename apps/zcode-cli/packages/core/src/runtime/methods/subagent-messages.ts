@@ -77,11 +77,11 @@ export function enqueueSubagentMessage(
 export async function persistSubagentMessageCommand(
   this: AgentRuntimeInternal,
   command: SubagentMessageRuntimeCommand,
-  midTurn = false,
+  delivery: "standalone" | "midTurn" | "contextOnly" = "standalone",
 ): Promise<MessageId> {
   await this.ensureContextInitialized(command.traceContext);
   const messageID = createMessageId();
-  const inputPresentation = midTurn ? "subagent_reply_steer" : "subagent_reply";
+  const inputPresentation = delivery === "midTurn" ? "subagent_reply_steer" : "subagent_reply";
   this.messageHistory.addUser(command.text, runtimeInputMetadata(inputPresentation));
   await this.persistSyntheticUserNoticeForSession({
     messageID,
@@ -92,6 +92,7 @@ export async function persistSubagentMessageCommand(
     visibility: "model-only",
     metadata: {
       inputPresentation,
+      ...(delivery === "contextOnly" ? { backgroundWakeSuppressed: true } : {}),
       subagentMessage: {
         responseId: command.responseId,
         agentId: command.agentId,

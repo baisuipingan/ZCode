@@ -305,6 +305,7 @@ async function stop(
   const payload = envelope.payload as CommandPayloadMap["stop"];
   const runtimeStop = record.app.runtime?.stopActiveForegroundExecution?.({
     expectedForegroundExecutionId: payload.expectedForegroundExecutionId,
+    pauseBackgroundWake: true,
     reason: "v4 session stopped",
   });
   host.logger?.info?.("v4 stop foreground execution inspected", {

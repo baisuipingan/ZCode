@@ -594,6 +594,7 @@ export interface ActiveForegroundExecutionState {
 
 export interface StopActiveForegroundExecutionOptions {
   expectedForegroundExecutionId?: string;
+  pauseBackgroundWake?: boolean;
   preserveQueueAutoDrainOnCancel?: boolean;
   reason?: string;
 }

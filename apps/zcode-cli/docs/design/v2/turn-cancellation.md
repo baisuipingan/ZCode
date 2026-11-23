@@ -85,6 +85,16 @@ closed, late provider bytes are ignored by the cancelled turn, and core receives
 a structured cancellation result instead of waiting for the remote server to
 finish voluntarily.
 
+## Desktop and Remote Chat Stop
+
+The V4 Stop command targets the runtime execution shown to the user. When the
+execution matches, the runtime pauses automatic turns from background results
+before aborting it. Queued and late background results still enter the session
+as model-only context, without opening a turn in the live stream or in
+replayed history. A new prompt or an explicit goal continuation restores the
+normal notification behavior. Internal preemption for Send Now keeps the
+existing notification behavior. A stale Stop cannot change a newer execution.
+
 ## Persistence And Resume
 
 Partial assistant output may remain visible to the user, but cancelled turns

@@ -60,7 +60,7 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
       }
       messageId = await persistBackgroundTaskNotificationCommand.call(this, removed);
     } else if (removed.mode === "subagent-message") {
-      messageId = await persistSubagentMessageCommand.call(this, removed, true);
+      messageId = await persistSubagentMessageCommand.call(this, removed, "midTurn");
     } else {
       continue;
     }

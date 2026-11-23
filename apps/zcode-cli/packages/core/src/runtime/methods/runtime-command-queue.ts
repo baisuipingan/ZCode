@@ -34,7 +34,7 @@ export function enqueueRuntimeCommand(this: AgentRuntimeInternal, command: Runti
       : command.mode === "subagent-message"
         ? command.agentId
         : undefined;
-  // 任务卡取消封住该执行的迟到通知；聊天 Stop 不设置此标记，保持原有唤起行为。
+  // 任务卡取消丢弃该任务的迟到通知。聊天 Stop 只暂停通知唤醒，保留结果。
   const sourceTask = sourceTaskId ? this.runtimeTaskRegistry.get(sourceTaskId) : undefined;
   if (sourceTask?.offPeakCancelled) return;
   if (sourceTask) {
@@ -237,8 +237,13 @@ async function runRuntimeCommand(
     return;
   }
   if (isStaleBranchRuntimeCommand(this, command)) return;
-  const foregroundExecution = beginForegroundExecution.call(this, command);
+  let foregroundExecution: ActiveForegroundExecutionState | undefined;
   try {
+    if (command.mode === "subagent-message" && this.backgroundWakePaused) {
+      await persistSubagentMessageCommand.call(this, command, "contextOnly");
+      return;
+    }
+    foregroundExecution = beginForegroundExecution.call(this, command);
     if (command.mode === "prompt") {
       if (this.runtimeCommandQueue.consumeCancelPending(command.id)) {
         if (command.startReservation) this.releaseTurnStart(command.startReservation.turnId);
@@ -246,6 +251,12 @@ async function runRuntimeCommand(
         return;
       }
       try {
+        if (
+          command.options?.inputSource === undefined &&
+          !foregroundExecution.controller.signal.aborted
+        ) {
+          this.backgroundWakePaused = false;
+        }
         const result = await this.executeTurnCommand(
           command.input,
           command.attachments,
@@ -288,6 +299,9 @@ async function runRuntimeCommand(
         return;
       }
       try {
+        if (command.options.trigger === "manual" && !foregroundExecution.controller.signal.aborted) {
+          this.backgroundWakePaused = false;
+        }
         const result = await runActiveTargetContinuationLoop.call(this, {
           ...command.options,
           abortSignal: foregroundExecution.controller.signal,
@@ -363,7 +377,7 @@ async function runRuntimeCommand(
       module: "core.runtime",
     });
   } finally {
-    finishForegroundExecution.call(this, foregroundExecution);
+    if (foregroundExecution) finishForegroundExecution.call(this, foregroundExecution);
   }
 }
 
@@ -386,13 +400,17 @@ async function runTaskNotificationBatch(
       eligibleCommands.map((command) => command.traceContext),
     ),
   };
-  const foregroundExecution = beginForegroundExecution.call(this, firstCommand);
+  const foregroundExecution = this.backgroundWakePaused
+    ? undefined
+    : beginForegroundExecution.call(this, firstCommand);
   const commandIds = eligibleCommands.map((command) => command.id);
   try {
     const persisted = await persistBackgroundTaskNotificationBatch.call(
       this,
       eligibleCommands as [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
+      foregroundExecution ? "standalone" : "contextOnly",
     );
+    if (!foregroundExecution) return;
     this.logger?.info?.("Background task notification batch started", {
       ...traceContextToLogContext(firstCommand.traceContext),
       batchSize: eligibleCommands.length,
@@ -458,7 +476,7 @@ async function runTaskNotificationBatch(
       module: "core.runtime",
     });
   } finally {
-    finishForegroundExecution.call(this, foregroundExecution);
+    if (foregroundExecution) finishForegroundExecution.call(this, foregroundExecution);
   }
 }
 
@@ -537,6 +555,8 @@ export function stopActiveForegroundExecution(
   // turn catch 因而把 queueAutoDrain 关闭。把调用意图固定在当前 foreground
   // execution 上，保证超时后迟到的 TurnComplete 仍能保留原队列授权。
   active.preserveQueueAutoDrainOnCancel = options.preserveQueueAutoDrainOnCancel === true;
+  // 在 abort 唤醒队列之前关闭自动启动。排队和之后到达的通知仍可保存。
+  if (options.pauseBackgroundWake) this.backgroundWakePaused = true;
   active.controller.abort(new Error(options.reason ?? "foreground execution stopped"));
   return {
     kind: "stopped",
