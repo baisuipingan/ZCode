@@ -75,8 +75,9 @@ jobs:
         env:
           ACCEPTANCE_SHA256: ${{ inputs.sha256 }}
         run: |
+          $manifest = Get-Content windows-installer-acceptance.json -Raw | ConvertFrom-Json
           ./scripts/windows-installer-acceptance.ps1 `
-            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT 'MiloCode-3.17.8-win-x64.exe') `
+            -InstallerPath (Join-Path $env:ACCEPTANCE_ROOT $manifest.assetName) `
             -Sha256 $env:ACCEPTANCE_SHA256 `
             -WorkRoot (Join-Path $env:ACCEPTANCE_ROOT 'run')
 
