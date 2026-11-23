@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       sha256:
-        description: Final 3.17.8 EXE SHA256 (leave empty to use the tracked manifest)
+        description: Final installer EXE SHA256 (leave empty to use the tracked manifest)
         required: false
         type: string
 
@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   final-installer:
-    if: github.repository == 'baisuipingan/ZCode' && (github.ref == 'refs/heads/codex/desktop-managed-agent' || github.ref == 'refs/heads/codex/milocode-computer-use')
+    if: github.repository == 'baisuipingan/ZCode' && (github.ref == 'refs/heads/codex/desktop-managed-agent' || github.ref == 'refs/heads/codex/milocode-computer-use' || github.ref == 'refs/heads/codex/milocode-stop')
     # GitHub only exposes draft releases to identities with repository push access.
     # This job needs that visibility to test the exact asset before publishing it.
     permissions:
@@ -62,8 +62,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content windows-installer-acceptance.json -Raw | ConvertFrom-Json
           if ($manifest.repository -ne 'baisuipingan/ZCode' -or
-              $manifest.releaseTag -ne 'milocode-v3.17.8' -or
-              $manifest.assetName -ne 'MiloCode-3.17.8-win-x64.exe') {
+              $manifest.version -notmatch '^3\.17\.[0-9]+$' -or
+              $manifest.releaseTag -ne "milocode-v$($manifest.version)" -or
+              $manifest.assetName -ne "MiloCode-$($manifest.version)-win-x64.exe") {
             throw 'The final installer source must remain the fixed 3.17.8 release asset.'
           }
           New-Item -ItemType Directory -Path $env:ACCEPTANCE_ROOT -Force | Out-Null
@@ -83,7 +84,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: milocode-3.17.8-windows-final-acceptance-${{ github.run_id }}
+          name: milocode-windows-final-acceptance-${{ github.run_id }}
           path: ${{ env.ACCEPTANCE_ROOT }}/run/evidence/
           if-no-files-found: warn
           retention-days: 14
